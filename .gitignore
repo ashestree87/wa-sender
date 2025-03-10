@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Chrome/Puppeteer sessions
+sessions/
+*.log
+*.old
+LOCK
+MANIFEST*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist/
+build/ 

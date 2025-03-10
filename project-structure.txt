@@ -1,0 +1,14 @@
+whatsapp-saas-mvp/
+├── client/                 # Frontend React application
+├── server/                 # Backend Node.js application
+│   ├── controllers/        # Request handlers
+│   ├── models/             # Database models
+│   ├── routes/             # API routes
+│   ├── services/           # Business logic
+│   │   ├── ai/             # AI message generation
+│   │   ├── automation/     # WhatsApp automation
+│   │   └── scheduler/      # Message scheduling
+│   └── utils/              # Helper functions
+├── .env                    # Environment variables
+├── package.json            # Project dependencies
+└── README.md               # Project documentation 
