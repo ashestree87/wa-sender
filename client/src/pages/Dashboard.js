@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
@@ -20,41 +20,49 @@ function Dashboard() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [campaignToDelete, setCampaignToDelete] = useState(null);
 
-  // Wrap fetchCampaigns with useCallback
-  const fetchCampaigns = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      console.log('Fetching campaigns...');
-      const response = await api.get('/campaigns');
-      console.log('Campaigns response:', response.data);
-      
-      setCampaigns(response.data);
-    } catch (error) {
-      console.error('Error fetching campaigns:', error);
-      
-      // More detailed error message
-      let errorMessage = 'Failed to load campaigns';
-      if (error.response) {
-        console.error('Error response:', error.response);
-        if (error.response.status === 401) {
-          errorMessage = 'Your session has expired. Please log in again.';
-        } else if (error.response.data && error.response.data.message) {
-          errorMessage = error.response.data.message;
-        }
-      }
-      
-      setError(errorMessage);
-      addToast(errorMessage, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [addToast]); // Include dependencies of fetchCampaigns
+  const mountedRef = useRef(false);
 
   useEffect(() => {
+    // Skip the second invocation in StrictMode
+    if (mountedRef.current) return;
+    mountedRef.current = true;
+    
+    // Define fetchCampaigns inside useEffect
+    const fetchCampaigns = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        console.log('Fetching campaigns...');
+        const response = await api.get('/campaigns');
+        console.log('Campaigns response:', response.data);
+        
+        setCampaigns(response.data);
+      } catch (error) {
+        console.error('Error fetching campaigns:', error);
+        
+        // More detailed error message
+        let errorMessage = 'Failed to load campaigns';
+        if (error.response) {
+          console.error('Error response:', error.response);
+          if (error.response.status === 401) {
+            errorMessage = 'Your session has expired. Please log in again.';
+          } else if (error.response.data && error.response.data.message) {
+            errorMessage = error.response.data.message;
+          }
+        }
+        
+        setError(errorMessage);
+        addToast(errorMessage, 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchCampaigns();
-  }, [fetchCampaigns]); // Include fetchCampaigns in the dependency array
+    
+    // Empty dependency array means this only runs once on mount
+  }, []); // Remove addToast from dependencies
 
   const openDeleteModal = (campaign) => {
     setCampaignToDelete(campaign);
@@ -64,7 +72,12 @@ function Dashboard() {
   const handleDelete = async () => {
     try {
       await api.delete(`/campaigns/${campaignToDelete.id}`);
-      setCampaigns(campaigns.filter(campaign => campaign.id !== campaignToDelete.id));
+      
+      // Update the campaigns state directly instead of fetching again
+      setCampaigns(prevCampaigns => 
+        prevCampaigns.filter(campaign => campaign.id !== campaignToDelete.id)
+      );
+      
       addToast('Campaign deleted successfully', 'success');
       setDeleteModalOpen(false);
       setCampaignToDelete(null);
@@ -92,15 +105,47 @@ function Dashboard() {
     setDuplicateModalOpen(true);
   };
 
+  const refreshCampaigns = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/campaigns');
+      setCampaigns(response.data);
+    } catch (error) {
+      console.error('Error refreshing campaigns:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDuplicate = async (newName) => {
     try {
       const response = await api.post(`/campaigns/${campaignToDuplicate.id}/duplicate`, { 
         name: newName 
       });
-      const newCampaignId = response.data.id;
-      addToast(`Campaign duplicated successfully with ID: ${newCampaignId}`, 'success');
+      
+      // Add the new campaign to the state directly
+      if (response.data && response.data.id) {
+        // Create a new campaign object based on the duplicated one
+        const newCampaign = {
+          ...campaignToDuplicate,
+          id: response.data.id,
+          name: newName,
+          created_at: new Date().toISOString(),
+          status: 'draft'
+        };
+        
+        // Update the campaigns state by adding the new campaign
+        setCampaigns(prevCampaigns => [...prevCampaigns, newCampaign]);
+        
+        addToast(`Campaign duplicated successfully`, 'success');
+      } else {
+        // If we don't get the expected response, do a full refresh
+        refreshCampaigns();
+        addToast(`Campaign duplicated successfully`, 'success');
+      }
+      
       setDuplicateModalOpen(false);
-      fetchCampaigns(); // Refresh the list
+      setCampaignToDuplicate(null);
     } catch (error) {
       console.error('Error duplicating campaign:', error);
       addToast('Failed to duplicate campaign', 'error');

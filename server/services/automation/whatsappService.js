@@ -443,8 +443,16 @@ class WhatsAppService {
       
       // Type the message with human-like delays
       for (let i = 0; i < message.length; i++) {
-        // Type each character
-        await this.page.keyboard.type(message[i]);
+        // Check if the current character is a newline
+        if (message[i] === '\n') {
+          // Use Shift+Enter for newlines in WhatsApp
+          await this.page.keyboard.down('Shift');
+          await this.page.keyboard.press('Enter');
+          await this.page.keyboard.up('Shift');
+        } else {
+          // Type regular character
+          await this.page.keyboard.type(message[i]);
+        }
         
         // Add random delay between keystrokes (20-80ms)
         await this.waitForTimeout(Math.floor(Math.random() * 60) + 20);

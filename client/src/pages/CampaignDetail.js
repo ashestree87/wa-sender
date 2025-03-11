@@ -12,21 +12,24 @@ function CampaignDetail() {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
-  const [pollingInterval, setPollingInterval] = useState(null);
   const { addToast } = useToast();
   
   // Add delete modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
+  // Add a state for WhatsApp connection status
+  const [whatsappConnected, setWhatsappConnected] = useState(false);
+  const [checkingWhatsapp, setCheckingWhatsapp] = useState(true);
+
+  // Add a state for WhatsApp initialization
+  const [initializingWhatsapp, setInitializingWhatsapp] = useState(false);
+
+  // Consolidated fetch function
   const fetchCampaignDetails = useCallback(async () => {
     try {
       console.log('Fetching campaign details for ID:', id);
       const campaignResponse = await api.get(`/campaigns/${id}`);
       console.log('Campaign data received:', campaignResponse.data);
-      
-      // Log the raw date strings for debugging
-      console.log('Raw created_at:', campaignResponse.data.created_at);
-      console.log('Raw scheduled_start_time:', campaignResponse.data.scheduled_start_time);
       
       // Map snake_case to camelCase
       const campaignData = {
@@ -57,52 +60,90 @@ function CampaignDetail() {
       }));
       
       setRecipients(mappedRecipients);
+      return true; // Indicate success
     } catch (error) {
       console.error('Error fetching campaign details:', error);
       setError('Failed to load campaign details');
+      setLoading(false);
+      throw error; // Re-throw to handle in the useEffect
     } finally {
       setLoading(false);
     }
   }, [id]);
 
+  // Single useEffect for data fetching and polling
   useEffect(() => {
-    fetchCampaignDetails();
-  }, [fetchCampaignDetails]);
-
-  useEffect(() => {
-    // Clear any existing interval first
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      setPollingInterval(null);
-    }
+    let isMounted = true;
+    let interval = null;
     
-    // Only set up polling if campaign exists and is in progress
-    if (campaign && campaign.status === 'in_progress') {
-      const interval = setInterval(() => {
-        fetchCampaignDetails();
-      }, 3000);
-      
-      setPollingInterval(interval);
-    }
-    
-    // Cleanup function
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
+    // Initial fetch
+    const initialFetch = async () => {
+      try {
+        const response = await fetchCampaignDetails();
+        // If the fetch fails with a 404 or similar, stop polling
+        if (!response && isMounted) {
+          clearInterval(interval);
+        }
+      } catch (error) {
+        console.error('Error in initial fetch:', error);
+        if (isMounted) {
+          // If we get a 404 or 500 error, stop polling
+          if (error.response && (error.response.status === 404 || error.response.status === 500)) {
+            console.log('Campaign not found or server error, stopping polling');
+            clearInterval(interval);
+          }
+        }
       }
     };
-  }, [campaign, fetchCampaignDetails, pollingInterval]);
-
-  // Add this new useEffect for component unmount cleanup
-  useEffect(() => {
-    // This will run when the component unmounts
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        console.log('Cleaned up polling interval on unmount');
+    
+    initialFetch();
+    
+    // Set up polling interval
+    interval = setInterval(async () => {
+      try {
+        const response = await fetchCampaignDetails();
+        // If the fetch fails with a 404 or similar, stop polling
+        if (!response && isMounted) {
+          clearInterval(interval);
+        }
+      } catch (error) {
+        console.error('Error in polling:', error);
+        if (isMounted) {
+          // If we get a 404 or 500 error, stop polling after a few attempts
+          if (error.response && (error.response.status === 404 || error.response.status === 500)) {
+            console.log('Campaign not found or server error, stopping polling');
+            clearInterval(interval);
+          }
+        }
       }
+    }, campaign?.status === 'in_progress' ? 3000 : 10000);
+    
+    // Clean up interval on unmount
+    return () => {
+      isMounted = false;
+      console.log('Cleaned up polling interval on unmount');
+      clearInterval(interval);
     };
-  }, [pollingInterval]);
+  }, [fetchCampaignDetails, campaign?.status]);
+
+  // Add a function to check WhatsApp status
+  const checkWhatsappStatus = useCallback(async () => {
+    try {
+      setCheckingWhatsapp(true);
+      const response = await api.get('/whatsapp/status');
+      setWhatsappConnected(response.data.status === 'authenticated');
+    } catch (error) {
+      console.error('Error checking WhatsApp status:', error);
+      setWhatsappConnected(false);
+    } finally {
+      setCheckingWhatsapp(false);
+    }
+  }, []);
+  
+  // Check WhatsApp status when component mounts
+  useEffect(() => {
+    checkWhatsappStatus();
+  }, [checkWhatsappStatus]);
 
   const executeCampaign = async () => {
     try {
@@ -204,12 +245,6 @@ function CampaignDetail() {
 
   const handleDelete = async () => {
     try {
-      // Clear polling interval before deleting
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        setPollingInterval(null);
-      }
-      
       await api.delete(`/campaigns/${id}`);
       addToast('Campaign deleted successfully', 'success');
       navigate('/'); // Redirect to dashboard
@@ -231,10 +266,12 @@ function CampaignDetail() {
     }
   };
 
-  // Add these functions to your CampaignDetail component
+  // Update the pauseCampaign function
   const pauseCampaign = async () => {
     try {
-      await api.pauseCampaign(id);
+      // Change this line to use the correct API call
+      await api.post(`/campaigns/${id}/pause`);
+      
       // Update the local state to reflect the paused status
       setCampaign(prev => ({ ...prev, status: 'paused' }));
       addToast('Campaign paused successfully', 'info');
@@ -253,6 +290,44 @@ function CampaignDetail() {
     } catch (error) {
       console.error('Error resuming campaign:', error);
       addToast(`Failed to resume campaign: ${error.response?.data?.message || error.message}`, 'error');
+    }
+  };
+
+  // Add a function to initialize WhatsApp directly
+  const initializeWhatsapp = async () => {
+    try {
+      setInitializingWhatsapp(true);
+      setError(null);
+      
+      // Call the WhatsApp initialization endpoint
+      const response = await api.post('/whatsapp/initialize');
+      
+      // Check if the response contains a success property or if the message indicates success
+      if (response.data.success || 
+          (response.data.message && 
+           response.data.message.toLowerCase().includes('authenticated'))) {
+        
+        addToast('WhatsApp initialized successfully', 'success');
+        // Check status again to update the UI
+        await checkWhatsappStatus();
+      } else {
+        throw new Error(response.data.message || 'Failed to initialize WhatsApp');
+      }
+    } catch (error) {
+      // Check if the error message actually indicates success
+      if (error.response?.data?.message && 
+          error.response.data.message.toLowerCase().includes('authenticated')) {
+        
+        addToast('WhatsApp initialized successfully', 'success');
+        // Check status again to update the UI
+        await checkWhatsappStatus();
+      } else {
+        console.error('Error initializing WhatsApp:', error);
+        setError(`Failed to initialize WhatsApp: ${error.response?.data?.message || error.message}`);
+        addToast(`Failed to initialize WhatsApp: ${error.response?.data?.message || error.message}`, 'error');
+      }
+    } finally {
+      setInitializingWhatsapp(false);
     }
   };
 
@@ -288,13 +363,24 @@ function CampaignDetail() {
             Delete
           </button>
           {campaign.status !== 'completed' && campaign.status !== 'in_progress' && (
-            <button
-              onClick={executeCampaign}
-              disabled={executing}
-              className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:opacity-50"
-            >
-              {executing ? 'Starting...' : 'Execute Campaign'}
-            </button>
+            whatsappConnected ? (
+              <button
+                onClick={executeCampaign}
+                disabled={executing}
+                className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:opacity-50"
+              >
+                {executing ? 'Starting...' : 'Execute Campaign'}
+              </button>
+            ) : (
+              <button
+                onClick={initializeWhatsapp}
+                disabled={initializingWhatsapp || checkingWhatsapp}
+                className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 disabled:opacity-50"
+              >
+                {initializingWhatsapp ? 'Initializing WhatsApp...' : 
+                 checkingWhatsapp ? 'Checking WhatsApp...' : 'Initialize WhatsApp'}
+              </button>
+            )
           )}
           {recipients.some(r => r.status === 'failed') && (
             <button
