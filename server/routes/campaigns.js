@@ -45,29 +45,9 @@ router.post('/:id/recipients/:recipientId/resend', campaignController.resendToRe
 router.post('/:id/duplicate', campaignController.duplicateCampaign);
 
 // Add this route handler for pausing a campaign
-router.put('/:id/pause', async (req, res) => {
-  try {
-    const campaign = await Campaign.findById(req.params.id);
-    
-    if (!campaign) {
-      return res.status(404).json({ message: 'Campaign not found' });
-    }
-    
-    // Check if user has permission to pause this campaign
-    if (campaign.userId.toString() !== req.user.id) {
-      return res.status(403).json({ message: 'Not authorized to pause this campaign' });
-    }
-    
-    campaign.status = 'paused';
-    campaign.updatedAt = Date.now();
-    
-    await campaign.save();
-    
-    res.json({ message: 'Campaign paused successfully', campaign });
-  } catch (error) {
-    console.error('Error pausing campaign:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
+router.post('/:id/pause', campaignController.pauseCampaign);
+
+// Also add the resume route if it's missing
+router.post('/:id/resume', campaignController.resumeCampaign);
 
 module.exports = router; 

@@ -28,7 +28,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/campaigns', campaignRoutes);
+app.use('/api/campaigns', require('./routes/campaigns'));
 app.use('/api/whatsapp', whatsappRoutes);
 
 // Error handling middleware

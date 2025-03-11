@@ -394,7 +394,9 @@ function CampaignDetail() {
           >
             Delete
           </button>
-          {campaign.status !== 'completed' && campaign.status !== 'in_progress' && (
+          
+          {/* Campaign action buttons - moved here */}
+          {campaign.status === 'draft' && (
             whatsappConnected ? (
               <button
                 onClick={executeCampaign}
@@ -414,14 +416,7 @@ function CampaignDetail() {
               </button>
             )
           )}
-          {recipients.some(r => r.status === 'failed') && (
-            <button
-              onClick={resendFailedMessages}
-              className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
-            >
-              Resend Failed Messages
-            </button>
-          )}
+          
           {campaign.status === 'in_progress' && (
             <button
               onClick={pauseCampaign}
@@ -430,12 +425,22 @@ function CampaignDetail() {
               Pause Campaign
             </button>
           )}
+          
           {campaign.status === 'paused' && (
             <button
               onClick={resumeCampaign}
               className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
             >
               Resume Campaign
+            </button>
+          )}
+          
+          {recipients.some(r => r.status === 'failed') && (
+            <button
+              onClick={resendFailedMessages}
+              className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
+            >
+              Resend Failed Messages
             </button>
           )}
         </div>
