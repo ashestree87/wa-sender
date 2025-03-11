@@ -84,6 +84,41 @@ function CampaignDetail() {
         if (!response && isMounted) {
           clearInterval(interval);
         }
+        
+        // Only set up polling if the campaign is in progress or scheduled
+        if (isMounted && campaign) {
+          const shouldPoll = ['in_progress', 'scheduled', 'paused'].includes(campaign.status);
+          
+          if (shouldPoll) {
+            // Set up polling interval
+            interval = setInterval(async () => {
+              try {
+                const response = await fetchCampaignDetails();
+                // If the fetch fails with a 404 or similar, stop polling
+                if (!response && isMounted) {
+                  clearInterval(interval);
+                }
+                
+                // If campaign is completed, stop polling
+                if (isMounted && campaign && campaign.status === 'completed') {
+                  console.log('Campaign completed, stopping polling');
+                  clearInterval(interval);
+                }
+              } catch (error) {
+                console.error('Error in polling:', error);
+                if (isMounted) {
+                  // If we get a 404 or 500 error, stop polling after a few attempts
+                  if (error.response && (error.response.status === 404 || error.response.status === 500)) {
+                    console.log('Campaign not found or server error, stopping polling');
+                    clearInterval(interval);
+                  }
+                }
+              }
+            }, campaign.status === 'in_progress' ? 3000 : 10000);
+          } else {
+            console.log('Campaign not in a status that requires polling:', campaign.status);
+          }
+        }
       } catch (error) {
         console.error('Error in initial fetch:', error);
         if (isMounted) {
@@ -97,26 +132,6 @@ function CampaignDetail() {
     };
     
     initialFetch();
-    
-    // Set up polling interval
-    interval = setInterval(async () => {
-      try {
-        const response = await fetchCampaignDetails();
-        // If the fetch fails with a 404 or similar, stop polling
-        if (!response && isMounted) {
-          clearInterval(interval);
-        }
-      } catch (error) {
-        console.error('Error in polling:', error);
-        if (isMounted) {
-          // If we get a 404 or 500 error, stop polling after a few attempts
-          if (error.response && (error.response.status === 404 || error.response.status === 500)) {
-            console.log('Campaign not found or server error, stopping polling');
-            clearInterval(interval);
-          }
-        }
-      }
-    }, campaign?.status === 'in_progress' ? 3000 : 10000);
     
     // Clean up interval on unmount
     return () => {
