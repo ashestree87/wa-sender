@@ -7,6 +7,7 @@ import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 
 function Dashboard() {
   const [campaigns, setCampaigns] = useState([]);
+  const [campaignProgress, setCampaignProgress] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const { addToast } = useToast();
@@ -22,6 +23,65 @@ function Dashboard() {
 
   const mountedRef = useRef(false);
 
+  // Add a ref for tracking in-progress campaign IDs
+  const campaignIdsRef = useRef([]);
+
+  // Add a ref to track if polling is set up
+  const pollingSetupRef = useRef(false);
+
+  // Add a ref to track which campaigns we've fetched progress for
+  const fetchedProgressRef = useRef(new Set());
+
+  // Add a function to calculate campaign progress
+  const calculateProgress = (campaign) => {
+    if (!campaignProgress[campaign.id]) {
+      return { fraction: '0/0', percentage: 0 };
+    }
+    
+    const { total, processed } = campaignProgress[campaign.id];
+    const percentage = total > 0 ? Math.round((processed / total) * 100) : 0;
+    
+    return {
+      fraction: `${processed}/${total}`,
+      percentage
+    };
+  };
+
+  // Function to fetch progress for in-progress campaigns
+  const fetchCampaignProgress = async (campaignId) => {
+    try {
+      console.log(`Fetching progress for campaign ${campaignId}`);
+      
+      // Fetch recipients to calculate progress
+      const recipientsResponse = await api.get(`/campaigns/${campaignId}/recipients`);
+      
+      if (recipientsResponse.data && recipientsResponse.data.length > 0) {
+        // Log recipient statuses to debug
+        const statusCounts = recipientsResponse.data.reduce((acc, r) => {
+          acc[r.status] = (acc[r.status] || 0) + 1;
+          return acc;
+        }, {});
+        
+        const total = recipientsResponse.data.length;
+        const processed = recipientsResponse.data.filter(r => 
+          ['sent', 'delivered', 'failed', 'skipped'].includes(r.status)
+        ).length;
+        
+        console.log(`Campaign ${campaignId} progress: ${processed}/${total} (${Math.round((processed/total)*100)}%)`);
+        console.log(`Status counts:`, statusCounts);
+        
+        // Update progress state
+        setCampaignProgress(prev => ({
+          ...prev,
+          [campaignId]: { total, processed }
+        }));
+      }
+    } catch (error) {
+      console.error(`Error fetching progress for campaign ${campaignId}:`, error);
+    }
+  };
+
+  // Main useEffect for initial data loading
   useEffect(() => {
     // Skip the second invocation in StrictMode
     if (mountedRef.current) return;
@@ -60,8 +120,57 @@ function Dashboard() {
     };
 
     fetchCampaigns();
-    
   }, [addToast]);
+  
+  // Simplify the polling mechanism to ensure progress updates work
+  useEffect(() => {
+    // Only run if we have campaigns and we're not loading
+    if (campaigns.length === 0 || loading) return;
+    
+    // Find in-progress campaigns
+    const inProgressCampaigns = campaigns.filter(
+      campaign => campaign.status === 'in_progress'
+    );
+    
+    if (inProgressCampaigns.length === 0) {
+      console.log('No in-progress campaigns to poll');
+      return;
+    }
+    
+    console.log(`Setting up polling for ${inProgressCampaigns.length} in-progress campaigns`);
+    
+    // Do an initial poll for all in-progress campaigns
+    inProgressCampaigns.forEach(campaign => {
+      fetchCampaignProgress(campaign.id);
+    });
+    
+    // Set up polling interval
+    const progressInterval = setInterval(() => {
+      console.log(`Polling progress at ${new Date().toLocaleTimeString()}`);
+      
+      // Re-check which campaigns are in progress (using the current state)
+      const currentInProgressCampaigns = campaigns.filter(
+        campaign => campaign.status === 'in_progress'
+      );
+      
+      if (currentInProgressCampaigns.length === 0) {
+        console.log('No more in-progress campaigns, clearing interval');
+        clearInterval(progressInterval);
+        return;
+      }
+      
+      // Poll each in-progress campaign
+      currentInProgressCampaigns.forEach(campaign => {
+        fetchCampaignProgress(campaign.id);
+      });
+    }, 30000); // Poll every 30 seconds
+    
+    // Clean up interval on unmount or when campaigns change
+    return () => {
+      console.log('Cleaning up campaign progress polling');
+      clearInterval(progressInterval);
+    };
+  }, [campaigns, loading]); // Re-run when campaigns or loading state changes
 
   const openDeleteModal = (campaign) => {
     setCampaignToDelete(campaign);
@@ -106,13 +215,12 @@ function Dashboard() {
 
   const refreshCampaigns = async () => {
     try {
-      setLoading(true);
+      console.log('Refreshing campaigns list...');
       const response = await api.get('/campaigns');
+      console.log('Refreshed campaigns response:', response.data);
       setCampaigns(response.data);
     } catch (error) {
       console.error('Error refreshing campaigns:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -162,6 +270,29 @@ function Dashboard() {
     counts[status] = (counts[status] || 0) + 1;
     return counts;
   }, {});
+
+  // Add a useEffect to periodically refresh campaigns
+  useEffect(() => {
+    // Only set up refresh if not already set up
+    if (!mountedRef.current) return;
+    
+    console.log('Setting up campaign refresh interval');
+    
+    // Initial refresh
+    refreshCampaigns();
+    
+    // Set up refresh interval
+    const refreshInterval = setInterval(() => {
+      console.log('Refreshing campaigns...');
+      refreshCampaigns();
+    }, 30000); // Refresh every 30 seconds
+    
+    // Clean up interval on unmount
+    return () => {
+      console.log('Cleaning up campaign refresh interval');
+      clearInterval(refreshInterval);
+    };
+  }, []); // Empty dependency array - only run once on mount
 
   if (loading) {
     return <div>Loading campaigns...</div>;
@@ -291,11 +422,41 @@ function Dashboard() {
                       'bg-gray-100 text-gray-800'
                     }`}>
                       {campaign.status || 'draft'}
+                      
+                      {/* Add progress indicator for in_progress and completed campaigns */}
+                      {campaign.status === 'in_progress' && campaignProgress[campaign.id] && (
+                        <span className="ml-1">
+                          {calculateProgress(campaign).fraction}
+                        </span>
+                      )}
+                      {campaign.status === 'completed' && (
+                        <span className="ml-1">
+                          {campaignProgress[campaign.id] 
+                            ? `${campaignProgress[campaign.id].total}/${campaignProgress[campaign.id].total}` 
+                            : 'Complete'}
+                        </span>
+                      )}
                     </span>
                     <span className="text-sm text-gray-500">
                       {new Date(campaign.created_at).toLocaleDateString()}
                     </span>
                   </div>
+                  
+                  {/* Add progress bar for in_progress and completed campaigns */}
+                  {(campaign.status === 'in_progress' || campaign.status === 'completed') && (
+                    <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                      <div 
+                        className={`h-1.5 rounded-full ${campaign.status === 'completed' ? 'bg-green-600' : 'bg-blue-600'}`}
+                        style={{ 
+                          width: campaign.status === 'completed' 
+                            ? '100%' 
+                            : (campaignProgress[campaign.id] 
+                                ? `${calculateProgress(campaign).percentage}%` 
+                                : '0%')
+                        }}
+                      ></div>
+                    </div>
+                  )}
                   
                   <div className="mt-4 flex justify-end space-x-2">
                     <Link 

@@ -346,6 +346,23 @@ function CampaignDetail() {
     }
   };
 
+  // Add a function to calculate campaign progress
+  const calculateProgress = useCallback(() => {
+    if (!recipients || recipients.length === 0) return { fraction: '0/0', percentage: 0 };
+    
+    const total = recipients.length;
+    const processed = recipients.filter(r => 
+      ['sent', 'delivered', 'failed', 'skipped'].includes(r.status)
+    ).length;
+    
+    const percentage = Math.round((processed / total) * 100);
+    
+    return {
+      fraction: `${processed}/${total}`,
+      percentage
+    };
+  }, [recipients]);
+
   if (loading) {
     return <div>Loading campaign details...</div>;
   }
@@ -443,7 +460,25 @@ function CampaignDetail() {
               }`}>
                 {campaign.status || 'pending'}
               </span>
+              
+              {/* Add progress indicator for in_progress campaigns */}
+              {campaign.status === 'in_progress' && (
+                <span className="ml-2">
+                  {calculateProgress().fraction} ({calculateProgress().percentage}%)
+                </span>
+              )}
             </p>
+            
+            {/* Add progress bar for in_progress campaigns */}
+            {campaign.status === 'in_progress' && (
+              <div className="mt-2 w-full bg-gray-200 rounded-full h-2.5">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full" 
+                  style={{ width: `${calculateProgress().percentage}%` }}
+                ></div>
+              </div>
+            )}
+            
             <p>
               <span className="font-medium">Created:</span> {campaign.createdAt ? new Date(campaign.createdAt).toLocaleString(undefined, {
                 year: 'numeric',
