@@ -1,0 +1,6 @@
+// ... existing code ...
+
+// Make sure this line exists
+app.use('/api/campaigns', require('./routes/campaigns'));
+
+// ... existing code ... 

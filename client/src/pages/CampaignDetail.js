@@ -70,11 +70,13 @@ function CampaignDetail() {
   }, [fetchCampaignDetails]);
 
   useEffect(() => {
+    // Clear any existing interval first
     if (pollingInterval) {
       clearInterval(pollingInterval);
       setPollingInterval(null);
     }
     
+    // Only set up polling if campaign exists and is in progress
     if (campaign && campaign.status === 'in_progress') {
       const interval = setInterval(() => {
         fetchCampaignDetails();
@@ -83,12 +85,24 @@ function CampaignDetail() {
       setPollingInterval(interval);
     }
     
+    // Cleanup function
     return () => {
       if (pollingInterval) {
         clearInterval(pollingInterval);
       }
     };
-  }, [campaign, fetchCampaignDetails]);
+  }, [campaign, fetchCampaignDetails, pollingInterval]);
+
+  // Add this new useEffect for component unmount cleanup
+  useEffect(() => {
+    // This will run when the component unmounts
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        console.log('Cleaned up polling interval on unmount');
+      }
+    };
+  }, [pollingInterval]);
 
   const executeCampaign = async () => {
     try {
@@ -143,7 +157,7 @@ function CampaignDetail() {
   // Add a new function to resend messages to specific recipients
   const resendToRecipient = async (recipientId) => {
     try {
-      const response = await api.post(`/campaigns/${id}/recipients/${recipientId}/resend`);
+      await api.post(`/campaigns/${id}/recipients/${recipientId}/resend`);
       addToast(`Message resend initiated for this recipient.`, 'info');
       fetchCampaignDetails(); // Refresh to show updated status
     } catch (error) {
@@ -161,7 +175,7 @@ function CampaignDetail() {
         return;
       }
       
-      const response = await api.post(`/campaigns/${id}/resend-failed`);
+      await api.post(`/campaigns/${id}/resend-failed`);
       addToast(`Resending messages to ${failedRecipients.length} recipients.`, 'info');
       fetchCampaignDetails(); // Refresh to show updated status
     } catch (error) {
@@ -190,12 +204,55 @@ function CampaignDetail() {
 
   const handleDelete = async () => {
     try {
+      // Clear polling interval before deleting
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        setPollingInterval(null);
+      }
+      
       await api.delete(`/campaigns/${id}`);
       addToast('Campaign deleted successfully', 'success');
       navigate('/'); // Redirect to dashboard
     } catch (error) {
       console.error('Error deleting campaign:', error);
       addToast(`Failed to delete campaign: ${error.response?.data?.message || error.message}`, 'error');
+    }
+  };
+
+  // Add this function to skip a recipient
+  const skipRecipient = async (recipientId) => {
+    try {
+      await api.post(`/campaigns/${id}/recipients/${recipientId}/skip`);
+      addToast('Recipient skipped successfully', 'success');
+      fetchCampaignDetails(); // Refresh to show updated status
+    } catch (error) {
+      console.error('Error skipping recipient:', error);
+      addToast(`Failed to skip recipient: ${error.response?.data?.message || error.message}`, 'error');
+    }
+  };
+
+  // Add these functions to your CampaignDetail component
+  const pauseCampaign = async () => {
+    try {
+      await api.pauseCampaign(id);
+      // Update the local state to reflect the paused status
+      setCampaign(prev => ({ ...prev, status: 'paused' }));
+      addToast('Campaign paused successfully', 'info');
+      fetchCampaignDetails(); // Refresh to show updated status
+    } catch (error) {
+      console.error('Error pausing campaign:', error);
+      addToast(`Failed to pause campaign: ${error.response?.data?.message || error.message}`, 'error');
+    }
+  };
+
+  const resumeCampaign = async () => {
+    try {
+      await api.post(`/campaigns/${id}/resume`);
+      addToast('Campaign resumed successfully', 'success');
+      fetchCampaignDetails(); // Refresh to show updated status
+    } catch (error) {
+      console.error('Error resuming campaign:', error);
+      addToast(`Failed to resume campaign: ${error.response?.data?.message || error.message}`, 'error');
     }
   };
 
@@ -245,6 +302,22 @@ function CampaignDetail() {
               className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
             >
               Resend Failed Messages
+            </button>
+          )}
+          {campaign.status === 'in_progress' && (
+            <button
+              onClick={pauseCampaign}
+              className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
+            >
+              Pause Campaign
+            </button>
+          )}
+          {campaign.status === 'paused' && (
+            <button
+              onClick={resumeCampaign}
+              className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+            >
+              Resume Campaign
             </button>
           )}
         </div>
@@ -334,7 +407,9 @@ function CampaignDetail() {
                       <span className={`px-2 py-1 rounded text-sm ${
                         recipient.status === 'sent' ? 'bg-green-100 text-green-800' :
                         recipient.status === 'failed' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
+                        recipient.status === 'skipped' ? 'bg-gray-100 text-gray-800' :
+                        recipient.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                        'bg-yellow-100 text-yellow-800'
                       }`}>
                         {recipient.status || 'pending'}
                       </span>
@@ -349,6 +424,14 @@ function CampaignDetail() {
                       {recipient.deliveredAt ? new Date(recipient.deliveredAt).toLocaleString() : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
+                      {recipient.status === 'pending' && (
+                        <button
+                          onClick={() => skipRecipient(recipient.id)}
+                          className="text-xs bg-gray-500 text-white px-2 py-1 rounded hover:bg-gray-600 mr-2"
+                        >
+                          Skip
+                        </button>
+                      )}
                       {recipient.status === 'failed' && (
                         <button
                           onClick={() => resendToRecipient(recipient.id)}

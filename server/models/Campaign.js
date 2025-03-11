@@ -76,13 +76,19 @@ class Campaign {
   }
 
   static async updateStatus(id, status) {
+    const validStatuses = ['draft', 'scheduled', 'in_progress', 'paused', 'completed', 'failed'];
+    
+    if (!validStatuses.includes(status)) {
+      throw new Error(`Invalid status: ${status}`);
+    }
+    
     const { data, error } = await supabase
       .from('campaigns')
       .update({ status })
       .eq('id', id)
       .select()
       .single();
-
+    
     if (error) throw error;
     return data;
   }

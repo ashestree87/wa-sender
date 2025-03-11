@@ -34,4 +34,14 @@ api.interceptors.response.use(
   }
 );
 
-export default api; 
+export default api;
+
+export const pauseCampaign = async (campaignId) => {
+  try {
+    const response = await axios.put(`/api/campaigns/${campaignId}/pause`);
+    return response.data;
+  } catch (error) {
+    console.error("API Error:", error);
+    throw error;
+  }
+}; 

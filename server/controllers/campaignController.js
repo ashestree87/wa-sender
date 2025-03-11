@@ -32,12 +32,15 @@ exports.createCampaign = async (req, res) => {
   }
 };
 
-// Get all campaigns for a user
+// Get all campaigns for the authenticated user
 exports.getCampaigns = async (req, res) => {
   try {
+    console.log('Getting campaigns for user:', req.userId);
     const campaigns = await Campaign.findByUserId(req.userId);
+    console.log(`Found ${campaigns.length} campaigns`);
     res.json(campaigns);
   } catch (error) {
+    console.error('Error fetching campaigns:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -339,6 +342,40 @@ exports.resendToRecipient = async (req, res) => {
   }
 };
 
+// Skip a recipient - simplified version
+exports.skipRecipient = async (req, res) => {
+  try {
+    const { campaignId, recipientId } = req.params;
+    
+    // Check if campaign exists and user is authorized
+    const campaign = await Campaign.findById(campaignId);
+    
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    if (campaign.user_id !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Check if recipient exists
+    const recipient = await Recipient.findById(recipientId);
+    
+    if (!recipient) {
+      return res.status(404).json({ message: 'Recipient not found' });
+    }
+    
+    // Simply update the status to 'skipped'
+    await Recipient.updateStatus(recipientId, 'skipped');
+    
+    res.json({ message: 'Recipient skipped successfully' });
+    
+  } catch (error) {
+    console.error('Skip recipient error:', error);
+    res.status(500).json({ message: 'Failed to skip recipient', error: error.message });
+  }
+};
+
 // Helper function to process campaign in background
 async function processCampaign(campaign, recipients, userId) {
   const whatsappService = require('../services/automation/whatsappService');
@@ -347,11 +384,28 @@ async function processCampaign(campaign, recipients, userId) {
   try {
     console.log(`Starting campaign execution: ${campaign.name}`);
     
+    // Update campaign status to in_progress
+    await Campaign.updateStatus(campaign.id, 'in_progress');
+    
     for (const recipient of recipients) {
       try {
-        // Skip already processed recipients
+        // Check if campaign has been paused
+        const currentCampaign = await Campaign.findById(campaign.id);
+        if (currentCampaign.status === 'paused') {
+          console.log(`Campaign ${campaign.name} has been paused. Stopping execution.`);
+          return; // Exit the function early
+        }
+        
+        // Skip already processed or skipped recipients
         if (recipient.status !== 'pending') {
           console.log(`Skipping recipient ${recipient.name}: status is ${recipient.status}`);
+          continue;
+        }
+        
+        // Check if recipient has been skipped (in case it was skipped while processing)
+        const updatedRecipient = await Recipient.findById(recipient.id);
+        if (updatedRecipient.status === 'skipped') {
+          console.log(`Recipient ${recipient.name} was skipped during processing`);
           continue;
         }
         
@@ -624,5 +678,87 @@ exports.duplicateCampaign = async (req, res) => {
   } catch (error) {
     console.error('Duplicate campaign error:', error);
     res.status(500).json({ message: 'Failed to duplicate campaign', error: error.message });
+  }
+};
+
+// Pause a campaign
+exports.pauseCampaign = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Check if campaign exists and user is authorized
+    const campaign = await Campaign.findById(id);
+    
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    if (campaign.user_id !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Only allow pausing if campaign is in progress
+    if (campaign.status !== 'in_progress') {
+      return res.status(400).json({ 
+        message: `Cannot pause campaign with status '${campaign.status}'` 
+      });
+    }
+    
+    // Update campaign status to paused
+    await Campaign.updateStatus(id, 'paused');
+    
+    res.json({ message: 'Campaign paused successfully' });
+    
+  } catch (error) {
+    console.error('Pause campaign error:', error);
+    res.status(500).json({ message: 'Failed to pause campaign', error: error.message });
+  }
+};
+
+// Resume a campaign
+exports.resumeCampaign = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Check if campaign exists and user is authorized
+    const campaign = await Campaign.findById(id);
+    
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    if (campaign.user_id !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Only allow resuming if campaign is paused
+    if (campaign.status !== 'paused') {
+      return res.status(400).json({ 
+        message: `Cannot resume campaign with status '${campaign.status}'` 
+      });
+    }
+    
+    // Update campaign status to in_progress
+    await Campaign.updateStatus(id, 'in_progress');
+    
+    // Get pending recipients
+    const pendingRecipients = await Recipient.findByCampaignId(id, 'pending');
+    
+    // If there are pending recipients, process them in the background
+    if (pendingRecipients.length > 0) {
+      processCampaign(campaign, pendingRecipients, req.userId);
+    } else {
+      // If no pending recipients, mark campaign as completed
+      await Campaign.updateStatus(id, 'completed');
+    }
+    
+    res.json({ 
+      message: 'Campaign resumed successfully',
+      pendingCount: pendingRecipients.length
+    });
+    
+  } catch (error) {
+    console.error('Resume campaign error:', error);
+    res.status(500).json({ message: 'Failed to resume campaign', error: error.message });
   }
 }; 

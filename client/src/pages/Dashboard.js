@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
@@ -20,21 +20,41 @@ function Dashboard() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [campaignToDelete, setCampaignToDelete] = useState(null);
 
-  useEffect(() => {
-    const fetchCampaigns = async () => {
-      try {
-        const response = await api.get('/campaigns');
-        setCampaigns(response.data);
-      } catch (error) {
-        console.error('Error fetching campaigns:', error);
-        setError('Failed to load campaigns');
-      } finally {
-        setLoading(false);
+  // Wrap fetchCampaigns with useCallback
+  const fetchCampaigns = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      console.log('Fetching campaigns...');
+      const response = await api.get('/campaigns');
+      console.log('Campaigns response:', response.data);
+      
+      setCampaigns(response.data);
+    } catch (error) {
+      console.error('Error fetching campaigns:', error);
+      
+      // More detailed error message
+      let errorMessage = 'Failed to load campaigns';
+      if (error.response) {
+        console.error('Error response:', error.response);
+        if (error.response.status === 401) {
+          errorMessage = 'Your session has expired. Please log in again.';
+        } else if (error.response.data && error.response.data.message) {
+          errorMessage = error.response.data.message;
+        }
       }
-    };
+      
+      setError(errorMessage);
+      addToast(errorMessage, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]); // Include dependencies of fetchCampaigns
 
+  useEffect(() => {
     fetchCampaigns();
-  }, []);
+  }, [fetchCampaigns]); // Include fetchCampaigns in the dependency array
 
   const openDeleteModal = (campaign) => {
     setCampaignToDelete(campaign);
@@ -74,22 +94,16 @@ function Dashboard() {
 
   const handleDuplicate = async (newName) => {
     try {
-      const response = await api.post(`/campaigns/${campaignToDuplicate.id}/duplicate`, {
-        name: newName
+      const response = await api.post(`/campaigns/${campaignToDuplicate.id}/duplicate`, { 
+        name: newName 
       });
-      
       const newCampaignId = response.data.id;
-      
-      // Refresh the campaigns list to include the new campaign
-      const campaignsResponse = await api.get('/campaigns');
-      setCampaigns(campaignsResponse.data);
-      
-      addToast(`Campaign duplicated successfully as "${newName}"`, 'success');
+      addToast(`Campaign duplicated successfully with ID: ${newCampaignId}`, 'success');
       setDuplicateModalOpen(false);
-      setCampaignToDuplicate(null);
+      fetchCampaigns(); // Refresh the list
     } catch (error) {
       console.error('Error duplicating campaign:', error);
-      addToast(`Failed to duplicate campaign: ${error.response?.data?.message || error.message}`, 'error');
+      addToast('Failed to duplicate campaign', 'error');
     }
   };
 

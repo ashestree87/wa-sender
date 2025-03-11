@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const campaignController = require('../controllers/campaignController');
 const auth = require('../middleware/auth');
+const Campaign = require('../models/Campaign');
 
 // Apply auth middleware to all routes
 router.use(auth);
@@ -36,5 +37,31 @@ router.post('/:id/recipients/:recipientId/resend', campaignController.resendToRe
 
 // Add this route for duplicating a campaign
 router.post('/:id/duplicate', campaignController.duplicateCampaign);
+
+// Add this route handler for pausing a campaign
+router.put('/:id/pause', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.id);
+    
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Check if user has permission to pause this campaign
+    if (campaign.userId.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Not authorized to pause this campaign' });
+    }
+    
+    campaign.status = 'paused';
+    campaign.updatedAt = Date.now();
+    
+    await campaign.save();
+    
+    res.json({ message: 'Campaign paused successfully', campaign });
+  } catch (error) {
+    console.error('Error pausing campaign:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 module.exports = router; 
