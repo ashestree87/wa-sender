@@ -53,6 +53,28 @@ class Recipient {
     if (error) throw error;
     return data;
   }
+
+  static async updateMessage(id, message) {
+    const { data, error } = await supabase
+      .from('recipients')
+      .update({ message })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  static async deleteByCampaignId(campaignId) {
+    const { error } = await supabase
+      .from('recipients')
+      .delete()
+      .eq('campaign_id', campaignId);
+
+    if (error) throw error;
+    return true;
+  }
 }
 
 module.exports = Recipient; 

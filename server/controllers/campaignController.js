@@ -89,21 +89,30 @@ exports.updateCampaign = async (req, res) => {
 // Delete a campaign
 exports.deleteCampaign = async (req, res) => {
   try {
-    const campaign = await Campaign.findById(req.params.id);
+    const { id } = req.params;
+    
+    // First check if the campaign exists
+    const campaign = await Campaign.findById(id);
     
     if (!campaign) {
       return res.status(404).json({ message: 'Campaign not found' });
     }
     
+    // Check if the user is authorized to delete this campaign
     if (campaign.user_id !== req.userId) {
-      return res.status(403).json({ message: 'Not authorized' });
+      return res.status(403).json({ message: 'Not authorized to delete this campaign' });
     }
     
-    await Campaign.delete(req.params.id);
+    // Delete associated recipients first to avoid foreign key constraints
+    await Recipient.deleteByCampaignId(id);
     
-    res.json({ message: 'Campaign deleted' });
+    // Then delete the campaign
+    await Campaign.delete(id);
+    
+    res.json({ message: 'Campaign deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Delete campaign error:', error);
+    res.status(500).json({ message: 'Failed to delete campaign', error: error.message });
   }
 };
 
@@ -371,7 +380,7 @@ async function processCampaign(campaign, recipients, userId) {
         }
         
         // Save the final message
-        await Recipient.updateMessage(recipient.id, finalMessage);
+        await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
         
         // Send the message
         const result = await whatsappService.sendMessage(
@@ -407,12 +416,12 @@ async function processCampaign(campaign, recipients, userId) {
     }
     
     // Update campaign status to completed
-    await Campaign.update(campaign.id, { status: 'completed' });
+    await Campaign.updateStatus(campaign.id, 'completed');
     console.log(`Campaign execution completed: ${campaign.name}`);
     
   } catch (error) {
     console.error('Campaign processing error:', error);
-    await Campaign.update(campaign.id, { status: 'failed' });
+    await Campaign.updateStatus(campaign.id, 'failed');
   }
 }
 
@@ -452,7 +461,7 @@ async function processFailedRecipients(campaign, recipients, userId) {
           }
           
           // Save the final message
-          await Recipient.updateStatus(recipient.id, 'processing', { message: finalMessage });
+          await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
         }
         
         // Send the message
@@ -532,7 +541,7 @@ async function processSingleRecipient(campaign, recipient, userId) {
       }
       
       // Save the final message
-      await Recipient.updateStatus(recipient.id, 'processing', { message: finalMessage });
+      await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
     }
     
     // Send the message
@@ -567,36 +576,39 @@ async function processSingleRecipient(campaign, recipient, userId) {
 exports.duplicateCampaign = async (req, res) => {
   try {
     const { id } = req.params;
+    const { name } = req.body; // Get custom name from request body
     
-    // Get original campaign
+    // Find the original campaign
     const originalCampaign = await Campaign.findById(id);
+    
     if (!originalCampaign) {
       return res.status(404).json({ message: 'Campaign not found' });
     }
     
-    // Check authorization
     if (originalCampaign.user_id !== req.userId) {
       return res.status(403).json({ message: 'Not authorized' });
     }
     
-    // Create new campaign with copied data
-    const newCampaign = await Campaign.create({
+    // Create a new campaign with the same data but a new name
+    const newCampaignData = {
       userId: req.userId,
-      name: `${originalCampaign.name} (Copy)`,
+      name: name || `${originalCampaign.name} (Copy)`, // Use provided name or default
       description: originalCampaign.description,
       messageTemplate: originalCampaign.message_template,
       useAI: originalCampaign.use_ai,
       aiPrompt: originalCampaign.ai_prompt,
-      status: 'draft'
-    });
+      status: 'draft' // Always start as draft
+    };
     
-    // Get recipients from original campaign
-    const originalRecipients = await Recipient.findByCampaignId(id);
+    const newCampaign = await Campaign.create(newCampaignData);
     
-    // Create recipients for new campaign if there are any
-    if (originalRecipients && originalRecipients.length > 0) {
+    // Find recipients from the original campaign
+    const recipients = await Recipient.findByCampaignId(id);
+    
+    // Create recipients for the new campaign if there are any
+    if (recipients && recipients.length > 0) {
       await Recipient.bulkCreate(
-        originalRecipients.map(r => ({
+        recipients.map(r => ({
           campaignId: newCampaign.id,
           phoneNumber: r.phone_number,
           name: r.name

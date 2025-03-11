@@ -74,6 +74,18 @@ class Campaign {
     if (error) throw error;
     return true;
   }
+
+  static async updateStatus(id, status) {
+    const { data, error } = await supabase
+      .from('campaigns')
+      .update({ status })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
 }
 
 module.exports = Campaign; 

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { useToast } from '../contexts/ToastContext';
+import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 
 function CampaignDetail() {
   const { id } = useParams();
@@ -10,6 +12,11 @@ function CampaignDetail() {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const [pollingInterval, setPollingInterval] = useState(null);
+  const { addToast } = useToast();
+  
+  // Add delete modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
 
   const fetchCampaignDetails = useCallback(async () => {
     try {
@@ -62,6 +69,27 @@ function CampaignDetail() {
     fetchCampaignDetails();
   }, [fetchCampaignDetails]);
 
+  useEffect(() => {
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      setPollingInterval(null);
+    }
+    
+    if (campaign && campaign.status === 'in_progress') {
+      const interval = setInterval(() => {
+        fetchCampaignDetails();
+      }, 3000);
+      
+      setPollingInterval(interval);
+    }
+    
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    };
+  }, [campaign, fetchCampaignDetails]);
+
   const executeCampaign = async () => {
     try {
       setExecuting(true);
@@ -79,7 +107,7 @@ function CampaignDetail() {
       
       // The response doesn't have a success property, but it has a message and recipientCount
       if (response.data.recipientCount) {
-        alert(`Campaign execution started! ${response.data.recipientCount} messages will be sent.`);
+        addToast(`Campaign execution started! ${response.data.recipientCount} messages will be sent.`, 'success');
         
         // Refresh campaign details to show updated status
         fetchCampaignDetails();
@@ -106,6 +134,7 @@ function CampaignDetail() {
       }
       
       setError(`Failed to execute campaign: ${errorMessage}`);
+      addToast(`Failed to execute campaign: ${errorMessage}`, 'error');
     } finally {
       setExecuting(false);
     }
@@ -115,11 +144,11 @@ function CampaignDetail() {
   const resendToRecipient = async (recipientId) => {
     try {
       const response = await api.post(`/campaigns/${id}/recipients/${recipientId}/resend`);
-      alert(`Message resend initiated for this recipient.`);
+      addToast(`Message resend initiated for this recipient.`, 'info');
       fetchCampaignDetails(); // Refresh to show updated status
     } catch (error) {
       console.error('Error resending message:', error);
-      alert(`Failed to resend message: ${error.response?.data?.message || error.message}`);
+      addToast(`Failed to resend message: ${error.response?.data?.message || error.message}`, 'error');
     }
   };
 
@@ -128,16 +157,16 @@ function CampaignDetail() {
     try {
       const failedRecipients = recipients.filter(r => r.status === 'failed');
       if (failedRecipients.length === 0) {
-        alert('No failed messages to resend.');
+        addToast('No failed messages to resend.', 'warning');
         return;
       }
       
       const response = await api.post(`/campaigns/${id}/resend-failed`);
-      alert(`Resending messages to ${failedRecipients.length} recipients.`);
+      addToast(`Resending messages to ${failedRecipients.length} recipients.`, 'info');
       fetchCampaignDetails(); // Refresh to show updated status
     } catch (error) {
       console.error('Error resending failed messages:', error);
-      alert(`Failed to resend messages: ${error.response?.data?.message || error.message}`);
+      addToast(`Failed to resend messages: ${error.response?.data?.message || error.message}`, 'error');
     }
   };
 
@@ -151,6 +180,22 @@ function CampaignDetail() {
     } catch (error) {
       console.error('Error duplicating campaign:', error);
       alert(`Failed to duplicate campaign: ${error.response?.data?.message || error.message}`);
+    }
+  };
+
+  // Updated delete function
+  const openDeleteModal = () => {
+    setDeleteModalOpen(true);
+  };
+
+  const handleDelete = async () => {
+    try {
+      await api.delete(`/campaigns/${id}`);
+      addToast('Campaign deleted successfully', 'success');
+      navigate('/'); // Redirect to dashboard
+    } catch (error) {
+      console.error('Error deleting campaign:', error);
+      addToast(`Failed to delete campaign: ${error.response?.data?.message || error.message}`, 'error');
     }
   };
 
@@ -178,6 +223,12 @@ function CampaignDetail() {
             className="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600"
           >
             Duplicate
+          </button>
+          <button
+            onClick={openDeleteModal}
+            className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+          >
+            Delete
           </button>
           {campaign.status !== 'completed' && campaign.status !== 'in_progress' && (
             <button
@@ -314,6 +365,16 @@ function CampaignDetail() {
           </div>
         )}
       </div>
+
+      {/* Add the delete modal at the end */}
+      {campaign && (
+        <DeleteConfirmationModal
+          isOpen={deleteModalOpen}
+          onClose={() => setDeleteModalOpen(false)}
+          onConfirm={handleDelete}
+          itemName={campaign.name}
+        />
+      )}
     </div>
   );
 }
