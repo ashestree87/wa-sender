@@ -79,11 +79,7 @@ function CampaignDetail() {
     // Initial fetch
     const initialFetch = async () => {
       try {
-        const response = await fetchCampaignDetails();
-        // If the fetch fails with a 404 or similar, stop polling
-        if (!response && isMounted) {
-          clearInterval(interval);
-        }
+        await fetchCampaignDetails();
         
         // Only set up polling if the campaign is in progress or scheduled
         if (isMounted && campaign) {
@@ -92,42 +88,14 @@ function CampaignDetail() {
           if (shouldPoll) {
             // Set up polling interval
             interval = setInterval(async () => {
-              try {
-                const response = await fetchCampaignDetails();
-                // If the fetch fails with a 404 or similar, stop polling
-                if (!response && isMounted) {
-                  clearInterval(interval);
-                }
-                
-                // If campaign is completed, stop polling
-                if (isMounted && campaign && campaign.status === 'completed') {
-                  console.log('Campaign completed, stopping polling');
-                  clearInterval(interval);
-                }
-              } catch (error) {
-                console.error('Error in polling:', error);
-                if (isMounted) {
-                  // If we get a 404 or 500 error, stop polling after a few attempts
-                  if (error.response && (error.response.status === 404 || error.response.status === 500)) {
-                    console.log('Campaign not found or server error, stopping polling');
-                    clearInterval(interval);
-                  }
-                }
+              if (isMounted) {
+                await fetchCampaignDetails();
               }
-            }, campaign.status === 'in_progress' ? 3000 : 10000);
-          } else {
-            console.log('Campaign not in a status that requires polling:', campaign.status);
+            }, 3000); // Poll every 3 seconds for active campaigns
           }
         }
       } catch (error) {
         console.error('Error in initial fetch:', error);
-        if (isMounted) {
-          // If we get a 404 or 500 error, stop polling
-          if (error.response && (error.response.status === 404 || error.response.status === 500)) {
-            console.log('Campaign not found or server error, stopping polling');
-            clearInterval(interval);
-          }
-        }
       }
     };
     
@@ -136,8 +104,7 @@ function CampaignDetail() {
     // Clean up interval on unmount
     return () => {
       isMounted = false;
-      console.log('Cleaned up polling interval on unmount');
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
     };
   }, [fetchCampaignDetails, campaign?.status]);
 
@@ -215,7 +182,8 @@ function CampaignDetail() {
     try {
       await api.post(`/campaigns/${id}/recipients/${recipientId}/resend`);
       addToast(`Message resend initiated for this recipient.`, 'info');
-      fetchCampaignDetails(); // Refresh to show updated status
+      // Immediately fetch updated data to show new sent time
+      await fetchCampaignDetails();
     } catch (error) {
       console.error('Error resending message:', error);
       addToast(`Failed to resend message: ${error.response?.data?.message || error.message}`, 'error');
@@ -233,7 +201,8 @@ function CampaignDetail() {
       
       await api.post(`/campaigns/${id}/resend-failed`);
       addToast(`Resending messages to ${failedRecipients.length} recipients.`, 'info');
-      fetchCampaignDetails(); // Refresh to show updated status
+      // Use await to ensure the data is refreshed
+      await fetchCampaignDetails();
     } catch (error) {
       console.error('Error resending failed messages:', error);
       addToast(`Failed to resend messages: ${error.response?.data?.message || error.message}`, 'error');
@@ -559,10 +528,24 @@ function CampaignDetail() {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {recipient.sentAt ? new Date(recipient.sentAt).toLocaleString() : '-'}
+                      {recipient.sentAt ? new Date(recipient.sentAt).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZoneName: 'short'
+                      }) : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {recipient.deliveredAt ? new Date(recipient.deliveredAt).toLocaleString() : '-'}
+                      {recipient.deliveredAt ? new Date(recipient.deliveredAt).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZoneName: 'short'
+                      }) : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {recipient.status === 'pending' && (

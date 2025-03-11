@@ -32,6 +32,14 @@ class Recipient {
       ...additionalData
     };
     
+    if (status === 'sent' && !updateData.sent_at) {
+      updateData.sent_at = new Date().toISOString();
+    }
+    
+    if (status === 'delivered' && !updateData.delivered_at) {
+      updateData.delivered_at = new Date().toISOString();
+    }
+    
     const { data, error } = await supabase
       .from('recipients')
       .update(updateData)
