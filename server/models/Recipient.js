@@ -27,14 +27,27 @@ class Recipient {
   }
 
   static async updateStatus(id, status, additionalData = {}) {
+    const updateData = {
+      status,
+      ...additionalData
+    };
+    
     const { data, error } = await supabase
       .from('recipients')
-      .update({
-        status,
-        ...additionalData
-      })
+      .update(updateData)
       .eq('id', id)
       .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  static async findById(id) {
+    const { data, error } = await supabase
+      .from('recipients')
+      .select('*')
+      .eq('id', id)
       .single();
 
     if (error) throw error;

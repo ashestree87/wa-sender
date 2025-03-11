@@ -209,7 +209,7 @@ exports.executeCampaign = async (req, res) => {
     }
     
     // Update campaign status
-    await Campaign.updateStatus(id, 'in_progress');
+    await Campaign.update(id, { status: 'in_progress' });
     
     // Start sending messages
     res.json({ 
@@ -223,6 +223,110 @@ exports.executeCampaign = async (req, res) => {
   } catch (error) {
     console.error('Execute campaign error:', error);
     res.status(500).json({ message: 'Failed to execute campaign', error: error.message });
+  }
+};
+
+// Resend messages to all failed recipients
+exports.resendFailedMessages = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get campaign details
+    const campaign = await Campaign.findById(id);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Check authorization
+    if (campaign.user_id !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Get failed recipients
+    const recipients = await Recipient.findByCampaignId(id);
+    const failedRecipients = recipients.filter(r => r.status === 'failed');
+    
+    if (failedRecipients.length === 0) {
+      return res.status(400).json({ message: 'No failed messages to resend' });
+    }
+    
+    // Initialize WhatsApp
+    const whatsappService = require('../services/automation/whatsappService');
+    const isInitialized = await whatsappService.initialize(req.userId);
+    
+    if (!isInitialized) {
+      return res.status(400).json({ message: 'WhatsApp not initialized. Please scan QR code first.' });
+    }
+    
+    // Update campaign status if it's not already in progress
+    if (campaign.status !== 'in_progress') {
+      await Campaign.update(id, { status: 'in_progress' });
+    }
+    
+    // Send response before processing
+    res.json({ 
+      message: 'Resending failed messages', 
+      recipientCount: failedRecipients.length 
+    });
+    
+    // Process messages in background
+    processFailedRecipients(campaign, failedRecipients, req.userId);
+    
+  } catch (error) {
+    console.error('Resend failed messages error:', error);
+    res.status(500).json({ message: 'Failed to resend messages', error: error.message });
+  }
+};
+
+// Resend message to a specific recipient
+exports.resendToRecipient = async (req, res) => {
+  try {
+    const { id, recipientId } = req.params;
+    
+    // Get campaign details
+    const campaign = await Campaign.findById(id);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Check authorization
+    if (campaign.user_id !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Get recipient
+    const recipient = await Recipient.findById(recipientId);
+    if (!recipient) {
+      return res.status(404).json({ message: 'Recipient not found' });
+    }
+    
+    if (recipient.campaign_id !== id) {
+      return res.status(400).json({ message: 'Recipient does not belong to this campaign' });
+    }
+    
+    // Initialize WhatsApp
+    const whatsappService = require('../services/automation/whatsappService');
+    const isInitialized = await whatsappService.initialize(req.userId);
+    
+    if (!isInitialized) {
+      return res.status(400).json({ message: 'WhatsApp not initialized. Please scan QR code first.' });
+    }
+    
+    // Update recipient status to pending
+    await Recipient.updateStatus(recipientId, 'pending');
+    
+    // Send response before processing
+    res.json({ 
+      message: 'Resending message to recipient', 
+      recipient: recipient.name 
+    });
+    
+    // Process message in background
+    processSingleRecipient(campaign, recipient, req.userId);
+    
+  } catch (error) {
+    console.error('Resend to recipient error:', error);
+    res.status(500).json({ message: 'Failed to resend message', error: error.message });
   }
 };
 
@@ -303,11 +407,210 @@ async function processCampaign(campaign, recipients, userId) {
     }
     
     // Update campaign status to completed
-    await Campaign.updateStatus(campaign.id, 'completed');
+    await Campaign.update(campaign.id, { status: 'completed' });
     console.log(`Campaign execution completed: ${campaign.name}`);
     
   } catch (error) {
     console.error('Campaign processing error:', error);
-    await Campaign.updateStatus(campaign.id, 'failed');
+    await Campaign.update(campaign.id, { status: 'failed' });
   }
-} 
+}
+
+// Helper function to process failed recipients in background
+async function processFailedRecipients(campaign, recipients, userId) {
+  const whatsappService = require('../services/automation/whatsappService');
+  const aiService = require('../services/ai/openaiService');
+  
+  try {
+    console.log(`Starting resend for failed messages in campaign: ${campaign.name}`);
+    
+    for (const recipient of recipients) {
+      try {
+        // Update recipient status to processing
+        await Recipient.updateStatus(recipient.id, 'processing');
+        
+        // Prepare message
+        let finalMessage = recipient.message || campaign.message_template;
+        
+        // Replace placeholders if using the template again
+        if (!recipient.message) {
+          finalMessage = finalMessage.replace(/{name}/g, recipient.name);
+          
+          // Apply AI enhancement if enabled
+          if (campaign.use_ai && campaign.ai_prompt) {
+            try {
+              const enhancedMessage = await aiService.enhanceMessage(
+                finalMessage, 
+                campaign.ai_prompt,
+                recipient.name
+              );
+              finalMessage = enhancedMessage || finalMessage;
+            } catch (aiError) {
+              console.error('AI enhancement error:', aiError);
+              // Continue with original message if AI fails
+            }
+          }
+          
+          // Save the final message
+          await Recipient.updateStatus(recipient.id, 'processing', { message: finalMessage });
+        }
+        
+        // Send the message
+        const result = await whatsappService.sendMessage(
+          recipient.phone_number, 
+          finalMessage
+        );
+        
+        if (result.success) {
+          await Recipient.updateStatus(recipient.id, 'sent', { sent_at: new Date() });
+          console.log(`Message resent to ${recipient.name} (${recipient.phone_number})`);
+        } else {
+          await Recipient.updateStatus(
+            recipient.id, 
+            'failed', 
+            { failure_reason: result.error }
+          );
+          console.error(`Failed to resend message to ${recipient.name}:`, result.error);
+        }
+        
+        // Add a delay between messages to avoid spam detection
+        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+        
+      } catch (recipientError) {
+        console.error(`Error processing recipient ${recipient.name}:`, recipientError);
+        await Recipient.updateStatus(
+          recipient.id, 
+          'failed', 
+          { failure_reason: recipientError.message }
+        );
+      }
+    }
+    
+    // Check if all recipients are processed
+    const allRecipients = await Recipient.findByCampaignId(campaign.id);
+    const pendingRecipients = allRecipients.filter(r => ['pending', 'processing'].includes(r.status));
+    
+    if (pendingRecipients.length === 0) {
+      // Update campaign status to completed if no pending recipients
+      await Campaign.update(campaign.id, { status: 'completed' });
+      console.log(`Campaign resend completed: ${campaign.name}`);
+    }
+    
+  } catch (error) {
+    console.error('Failed recipients processing error:', error);
+  }
+}
+
+// Helper function to process a single recipient
+async function processSingleRecipient(campaign, recipient, userId) {
+  const whatsappService = require('../services/automation/whatsappService');
+  const aiService = require('../services/ai/openaiService');
+  
+  try {
+    console.log(`Starting resend for recipient: ${recipient.name}`);
+    
+    // Prepare message
+    let finalMessage = recipient.message || campaign.message_template;
+    
+    // Replace placeholders if using the template again
+    if (!recipient.message) {
+      finalMessage = finalMessage.replace(/{name}/g, recipient.name);
+      
+      // Apply AI enhancement if enabled
+      if (campaign.use_ai && campaign.ai_prompt) {
+        try {
+          const enhancedMessage = await aiService.enhanceMessage(
+            finalMessage, 
+            campaign.ai_prompt,
+            recipient.name
+          );
+          finalMessage = enhancedMessage || finalMessage;
+        } catch (aiError) {
+          console.error('AI enhancement error:', aiError);
+          // Continue with original message if AI fails
+        }
+      }
+      
+      // Save the final message
+      await Recipient.updateStatus(recipient.id, 'processing', { message: finalMessage });
+    }
+    
+    // Send the message
+    const result = await whatsappService.sendMessage(
+      recipient.phone_number, 
+      finalMessage
+    );
+    
+    if (result.success) {
+      await Recipient.updateStatus(recipient.id, 'sent', { sent_at: new Date() });
+      console.log(`Message resent to ${recipient.name} (${recipient.phone_number})`);
+    } else {
+      await Recipient.updateStatus(
+        recipient.id, 
+        'failed', 
+        { failure_reason: result.error }
+      );
+      console.error(`Failed to resend message to ${recipient.name}:`, result.error);
+    }
+    
+  } catch (error) {
+    console.error(`Error processing recipient ${recipient.name}:`, error);
+    await Recipient.updateStatus(
+      recipient.id, 
+      'failed', 
+      { failure_reason: error.message }
+    );
+  }
+}
+
+// Duplicate a campaign
+exports.duplicateCampaign = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get original campaign
+    const originalCampaign = await Campaign.findById(id);
+    if (!originalCampaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Check authorization
+    if (originalCampaign.user_id !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Create new campaign with copied data
+    const newCampaign = await Campaign.create({
+      userId: req.userId,
+      name: `${originalCampaign.name} (Copy)`,
+      description: originalCampaign.description,
+      messageTemplate: originalCampaign.message_template,
+      useAI: originalCampaign.use_ai,
+      aiPrompt: originalCampaign.ai_prompt,
+      status: 'draft'
+    });
+    
+    // Get recipients from original campaign
+    const originalRecipients = await Recipient.findByCampaignId(id);
+    
+    // Create recipients for new campaign if there are any
+    if (originalRecipients && originalRecipients.length > 0) {
+      await Recipient.bulkCreate(
+        originalRecipients.map(r => ({
+          campaignId: newCampaign.id,
+          phoneNumber: r.phone_number,
+          name: r.name
+        }))
+      );
+    }
+    
+    res.status(201).json({ 
+      message: 'Campaign duplicated successfully', 
+      id: newCampaign.id 
+    });
+    
+  } catch (error) {
+    console.error('Duplicate campaign error:', error);
+    res.status(500).json({ message: 'Failed to duplicate campaign', error: error.message });
+  }
+}; 

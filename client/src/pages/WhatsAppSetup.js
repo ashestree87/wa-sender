@@ -4,6 +4,7 @@ import api from '../services/api';
 function WhatsAppSetup() {
   const [status, setStatus] = useState('checking');
   const [error, setError] = useState(null);
+  const [qrCode, setQrCode] = useState(null);
 
   useEffect(() => {
     checkStatus();
@@ -15,6 +16,14 @@ function WhatsAppSetup() {
       const response = await api.get('/whatsapp/status');
       console.log('WhatsApp status response:', response.data);
       setStatus(response.data.status);
+      
+      // If there's a QR code, display it
+      if (response.data.qrCode) {
+        setQrCode(response.data.qrCode);
+      } else {
+        setQrCode(null);
+      }
+      
       setError(null);
     } catch (err) {
       console.error('Error checking WhatsApp status:', err);
@@ -96,6 +105,15 @@ function WhatsAppSetup() {
             </button>
           )}
         </div>
+
+        {qrCode && status === 'initializing' && (
+          <div className="mt-4">
+            <h3 className="text-lg font-semibold mb-2">Scan this QR code with WhatsApp</h3>
+            <div className="bg-white p-4 inline-block">
+              <img src={qrCode} alt="WhatsApp QR Code" className="max-w-xs" />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

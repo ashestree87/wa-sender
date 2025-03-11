@@ -1,0 +1,14 @@
+run the front end inside the client folder
+npm run dev
+
+npm run build
+
+npm run start
+
+run the server Backend
+node server/index.js
+
+node server/index.js --env-file=.env
+
+node server/index.js --env-file=.env.local
+

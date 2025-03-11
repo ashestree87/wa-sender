@@ -8,6 +8,8 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import NewCampaign from './pages/NewCampaign';
 import WhatsAppSetup from './pages/WhatsAppSetup';
+import CampaignDetail from './pages/CampaignDetail';
+import EditCampaign from './pages/EditCampaign';
 
 function App() {
   return (
@@ -24,6 +26,8 @@ function App() {
               <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
               <Route path="/campaigns/new" element={<PrivateRoute><NewCampaign /></PrivateRoute>} />
               <Route path="/whatsapp-setup" element={<PrivateRoute><WhatsAppSetup /></PrivateRoute>} />
+              <Route path="/campaigns/:id" element={<PrivateRoute><CampaignDetail /></PrivateRoute>} />
+              <Route path="/campaigns/:id/edit" element={<PrivateRoute><EditCampaign /></PrivateRoute>} />
             </Routes>
           </div>
         </div>

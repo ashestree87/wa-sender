@@ -30,4 +30,11 @@ router.get('/:id/recipients', campaignController.getRecipients);
 // Add this route
 router.post('/:id/execute', campaignController.executeCampaign);
 
+// Add these routes for resending messages
+router.post('/:id/resend-failed', campaignController.resendFailedMessages);
+router.post('/:id/recipients/:recipientId/resend', campaignController.resendToRecipient);
+
+// Add this route for duplicating a campaign
+router.post('/:id/duplicate', campaignController.duplicateCampaign);
+
 module.exports = router; 
