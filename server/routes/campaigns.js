@@ -3,6 +3,7 @@ const router = express.Router();
 const campaignController = require('../controllers/campaignController');
 const auth = require('../middleware/auth');
 const Campaign = require('../models/Campaign');
+const supabase = require('../config/database');
 
 // Apply auth middleware to all routes
 router.use(auth);
@@ -49,5 +50,53 @@ router.post('/:id/pause', campaignController.pauseCampaign);
 
 // Also add the resume route if it's missing
 router.post('/:id/resume', campaignController.resumeCampaign);
+
+// Update the skip recipient route to use the Campaign model methods
+router.post('/:id/recipients/:recipientId/skip', async (req, res) => {
+  try {
+    const { id, recipientId } = req.params;
+    console.log(`Attempting to skip recipient ${recipientId} for campaign ${id}`);
+    
+    // Check if campaign exists and user is authorized
+    const campaign = await Campaign.findById(id);
+    
+    if (!campaign) {
+      console.log(`Campaign ${id} not found`);
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Fix the authorization check - use req.userId
+    if (String(campaign.user_id) !== String(req.userId)) {
+      console.log(`User ${req.userId} not authorized for campaign ${id} (owned by ${campaign.user_id})`);
+      return res.status(403).json({ message: 'Not authorized to modify this campaign' });
+    }
+    
+    // Find the recipient
+    console.log(`Finding recipient ${recipientId}`);
+    const recipient = await Campaign.getRecipient(id, recipientId);
+    
+    if (!recipient) {
+      console.log(`Recipient ${recipientId} not found`);
+      return res.status(404).json({ message: 'Recipient not found' });
+    }
+    
+    console.log(`Recipient found with status: ${recipient.status}`);
+    
+    // Update recipient status to skipped
+    console.log(`Updating recipient ${recipientId} status to skipped`);
+    await Campaign.updateRecipientStatus(id, recipientId, 'skipped');
+    
+    console.log(`Successfully skipped recipient ${recipientId}`);
+    res.json({ message: 'Recipient skipped successfully' });
+    
+  } catch (error) {
+    console.error('Skip recipient error:', error);
+    res.status(500).json({ 
+      message: 'Failed to skip recipient', 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
 
 module.exports = router; 

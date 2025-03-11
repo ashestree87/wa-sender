@@ -92,6 +92,61 @@ class Campaign {
     if (error) throw error;
     return data;
   }
+
+  static async getRecipient(campaignId, recipientId) {
+    try {
+      console.log(`DB Query: Getting recipient ${recipientId} for campaign ${campaignId}`);
+      
+      const { data, error } = await supabase
+        .from('recipients')
+        .select('*')
+        .eq('campaign_id', campaignId)
+        .eq('id', recipientId)
+        .single();
+      
+      if (error) {
+        console.error('Error in getRecipient:', error);
+        throw error;
+      }
+      
+      console.log('Recipient data:', data);
+      return data;
+    } catch (error) {
+      console.error(`Failed to get recipient ${recipientId} for campaign ${campaignId}:`, error);
+      throw error;
+    }
+  }
+
+  static async updateRecipientStatus(campaignId, recipientId, status) {
+    try {
+      console.log(`DB Query: Updating recipient ${recipientId} status to ${status}`);
+      
+      const validStatuses = ['pending', 'processing', 'sent', 'delivered', 'failed', 'skipped'];
+      
+      if (!validStatuses.includes(status)) {
+        throw new Error(`Invalid recipient status: ${status}`);
+      }
+      
+      const { data, error } = await supabase
+        .from('recipients')
+        .update({ status })
+        .eq('campaign_id', campaignId)
+        .eq('id', recipientId)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Error in updateRecipientStatus:', error);
+        throw error;
+      }
+      
+      console.log('Updated recipient data:', data);
+      return data;
+    } catch (error) {
+      console.error(`Failed to update recipient ${recipientId} status to ${status}:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = Campaign; 
