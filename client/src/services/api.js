@@ -36,12 +36,13 @@ api.interceptors.response.use(
 
 export default api;
 
-export const pauseCampaign = async (campaignId) => {
-  try {
-    const response = await axios.put(`/api/campaigns/${campaignId}/pause`);
-    return response.data;
-  } catch (error) {
-    console.error("API Error:", error);
-    throw error;
-  }
-}; 
+// Remove this export as it's causing conflicts
+// export const pauseCampaign = async (campaignId) => {
+//   try {
+//     const response = await axios.put(`/api/campaigns/${campaignId}/pause`);
+//     return response.data;
+//   } catch (error) {
+//     console.error("API Error:", error);
+//     throw error;
+//   }
+// }; 

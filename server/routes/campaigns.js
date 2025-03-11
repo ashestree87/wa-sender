@@ -7,6 +7,12 @@ const Campaign = require('../models/Campaign');
 // Apply auth middleware to all routes
 router.use(auth);
 
+// Add this at the top of your file to log all incoming requests
+router.use((req, res, next) => {
+  console.log(`Campaign route request: ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // Create a new campaign
 router.post('/', campaignController.createCampaign);
 

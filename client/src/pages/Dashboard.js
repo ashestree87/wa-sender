@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
@@ -61,8 +61,7 @@ function Dashboard() {
 
     fetchCampaigns();
     
-    // Empty dependency array means this only runs once on mount
-  }, []); // Remove addToast from dependencies
+  }, [addToast]);
 
   const openDeleteModal = (campaign) => {
     setCampaignToDelete(campaign);
