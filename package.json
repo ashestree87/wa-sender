@@ -8,11 +8,11 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.12.1",
     "node-schedule": "^2.1.1",
     "openai": "^4.0.0",
-    "puppeteer-core": "^24.4.0",
-    "react-router-dom": "^7.3.0"
+    "qrcode": "^1.5.4",
+    "react-router-dom": "^7.3.0",
+    "whatsapp-web.js": "^1.26.0"
   },
   "devDependencies": {
     "axios": "^1.8.2"

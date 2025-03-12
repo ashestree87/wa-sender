@@ -7,20 +7,28 @@ exports.initializeSession = async (req, res) => {
     // Start initialization
     await whatsappService.initialize(req.userId);
     
-    // Wait for authentication
-    const isAuthenticated = await whatsappService.waitForAuthentication();
+    // Check current status
+    const status = await whatsappService.getStatus();
     
-    if (isAuthenticated) {
-      console.log('WhatsApp authentication successful');
+    if (status === 'authenticated') {
+      console.log('WhatsApp already authenticated');
       res.json({ 
         message: 'WhatsApp session initialized and authenticated', 
         status: 'authenticated' 
       });
-    } else {
-      console.log('WhatsApp authentication failed or timed out');
+    } else if (status === 'awaiting_qr') {
+      console.log('WhatsApp waiting for QR code scan');
+      const qrCode = await whatsappService.getQrCode();
       res.json({ 
-        message: 'Authentication failed or timed out', 
-        status: 'failed' 
+        message: 'Please scan the QR code with WhatsApp', 
+        status: 'awaiting_qr',
+        qrCode: qrCode
+      });
+    } else {
+      console.log('WhatsApp initializing');
+      res.json({ 
+        message: 'WhatsApp session initializing', 
+        status: status 
       });
     }
   } catch (error) {
@@ -34,8 +42,15 @@ exports.initializeSession = async (req, res) => {
 
 exports.getSessionStatus = async (req, res) => {
   try {
-    const status = await whatsappService.getStatus(req.userId);
-    res.json({ status });
+    const status = await whatsappService.getStatus();
+    
+    // If status is awaiting_qr, include the QR code
+    if (status === 'awaiting_qr') {
+      const qrCode = await whatsappService.getQrCode();
+      res.json({ status, qrCode });
+    } else {
+      res.json({ status });
+    }
   } catch (error) {
     console.error('Get status error:', error);
     res.status(500).json({ message: 'Failed to get status', error: error.message });
@@ -65,7 +80,7 @@ exports.sendTestMessage = async (req, res) => {
     const result = await whatsappService.sendMessage(phoneNumber, message);
     
     if (result.success) {
-      res.json({ message: 'Message sent successfully' });
+      res.json({ message: 'Message sent successfully', messageId: result.messageId });
     } else {
       res.status(500).json({ 
         message: 'Failed to send message', 
