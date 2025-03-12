@@ -294,6 +294,53 @@ function Dashboard() {
     };
   }, []); // Empty dependency array - only run once on mount
 
+  // Add these new functions to handle pause and resume actions
+  const pauseCampaign = async (campaignId, event) => {
+    // Prevent the click from bubbling up to parent elements
+    event.stopPropagation();
+    
+    try {
+      await api.post(`/campaigns/${campaignId}/pause`);
+      
+      // Update the campaign status locally
+      setCampaigns(prevCampaigns => 
+        prevCampaigns.map(campaign => 
+          campaign.id === campaignId 
+            ? { ...campaign, status: 'paused' } 
+            : campaign
+        )
+      );
+      
+      addToast('Campaign paused successfully', 'info');
+    } catch (error) {
+      console.error('Error pausing campaign:', error);
+      addToast(`Failed to pause campaign: ${error.response?.data?.message || error.message}`, 'error');
+    }
+  };
+
+  const resumeCampaign = async (campaignId, event) => {
+    // Prevent the click from bubbling up to parent elements
+    event.stopPropagation();
+    
+    try {
+      await api.post(`/campaigns/${campaignId}/resume`);
+      
+      // Update the campaign status locally
+      setCampaigns(prevCampaigns => 
+        prevCampaigns.map(campaign => 
+          campaign.id === campaignId 
+            ? { ...campaign, status: 'in_progress' } 
+            : campaign
+        )
+      );
+      
+      addToast('Campaign resumed successfully', 'success');
+    } catch (error) {
+      console.error('Error resuming campaign:', error);
+      addToast(`Failed to resume campaign: ${error.response?.data?.message || error.message}`, 'error');
+    }
+  };
+
   if (loading) {
     return <div>Loading campaigns...</div>;
   }
@@ -398,6 +445,20 @@ function Dashboard() {
                   {statusCounts.failed || 0}
                 </span>
               </button>
+              
+              <button
+                onClick={() => setFilter('paused')}
+                className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+                  filter === 'paused'
+                    ? 'border-indigo-500 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Paused
+                <span className="ml-2 bg-yellow-100 text-yellow-600 py-0.5 px-2 rounded-full text-xs">
+                  {statusCounts.paused || 0}
+                </span>
+              </button>
             </nav>
           </div>
 
@@ -418,13 +479,14 @@ function Dashboard() {
                     <span className={`px-2 py-1 rounded text-xs ${
                       campaign.status === 'completed' ? 'bg-green-100 text-green-800' :
                       campaign.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                      campaign.status === 'paused' ? 'bg-yellow-100 text-yellow-800' :
                       campaign.status === 'failed' ? 'bg-red-100 text-red-800' :
                       'bg-gray-100 text-gray-800'
                     }`}>
                       {campaign.status || 'draft'}
                       
-                      {/* Add progress indicator for in_progress and completed campaigns */}
-                      {campaign.status === 'in_progress' && campaignProgress[campaign.id] && (
+                      {/* Add progress indicator for in_progress, paused, and completed campaigns */}
+                      {(campaign.status === 'in_progress' || campaign.status === 'paused') && campaignProgress[campaign.id] && (
                         <span className="ml-1">
                           {calculateProgress(campaign).fraction}
                         </span>
@@ -465,12 +527,37 @@ function Dashboard() {
                     >
                       View
                     </Link>
-                    <Link 
-                      to={`/campaigns/${campaign.id}/edit`}
-                      className="text-sm bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
-                    >
-                      Edit
-                    </Link>
+                    
+                    {/* Only show Edit button for draft campaigns */}
+                    {campaign.status === 'draft' && (
+                      <Link 
+                        to={`/campaigns/${campaign.id}/edit`}
+                        className="text-sm bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
+                      >
+                        Edit
+                      </Link>
+                    )}
+                    
+                    {/* Add pause button for in-progress campaigns */}
+                    {campaign.status === 'in_progress' && (
+                      <button
+                        onClick={(e) => pauseCampaign(campaign.id, e)}
+                        className="text-sm bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600"
+                      >
+                        Pause
+                      </button>
+                    )}
+                    
+                    {/* Add resume button for paused campaigns */}
+                    {campaign.status === 'paused' && (
+                      <button
+                        onClick={(e) => resumeCampaign(campaign.id, e)}
+                        className="text-sm bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600"
+                      >
+                        Resume
+                      </button>
+                    )}
+                    
                     <button
                       onClick={() => openDuplicateModal(campaign)}
                       className="text-sm bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600"
