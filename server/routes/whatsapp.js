@@ -11,5 +11,7 @@ router.post('/initialize', whatsappController.initializeSession);
 router.get('/status', whatsappController.getSessionStatus);
 router.post('/logout', whatsappController.logout);
 router.post('/send-test', whatsappController.sendTestMessage);
+router.post('/connections', whatsappController.createConnection);
+router.delete('/connections/:connectionId', whatsappController.deleteConnection);
 
 module.exports = router; 
