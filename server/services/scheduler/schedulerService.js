@@ -60,7 +60,12 @@ class SchedulerService {
   
   async processCampaign(campaignId) {
     try {
+      // First check if the campaign still exists before processing
       const campaign = await Campaign.findById(campaignId);
+      if (!campaign) {
+        console.log(`Campaign ${campaignId} no longer exists, skipping processing`);
+        return; // Exit early if campaign doesn't exist
+      }
       
       if (!campaign || campaign.status !== 'running') {
         return;
@@ -145,8 +150,19 @@ class SchedulerService {
     } catch (error) {
       console.error(`Error processing campaign ${campaignId}:`, error);
       
-      // Mark campaign as paused on error
-      await Campaign.update(campaignId, { status: 'paused' });
+      try {
+        // Check if campaign still exists before trying to update it
+        const campaignStillExists = await Campaign.findById(campaignId);
+        if (campaignStillExists) {
+          // Only update if campaign still exists
+          await Campaign.update(campaignId, { status: 'paused' });
+        } else {
+          console.log(`Campaign ${campaignId} was deleted during processing, skipping status update`);
+        }
+      } catch (updateError) {
+        console.error(`Could not update campaign ${campaignId} status:`, updateError);
+        // Don't throw, just log
+      }
     }
   }
   

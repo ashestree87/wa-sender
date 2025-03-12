@@ -52,6 +52,13 @@ function Dashboard() {
     try {
       console.log(`Fetching progress for campaign ${campaignId}`);
       
+      // Check if the campaign still exists in our state
+      const campaignExists = campaigns.some(c => c.id === campaignId);
+      if (!campaignExists) {
+        console.log(`Campaign ${campaignId} no longer exists in state, skipping progress fetch`);
+        return;
+      }
+      
       // Fetch recipients to calculate progress
       const recipientsResponse = await api.get(`/campaigns/${campaignId}/recipients`);
       
@@ -78,6 +85,28 @@ function Dashboard() {
       }
     } catch (error) {
       console.error(`Error fetching progress for campaign ${campaignId}:`, error);
+      
+      // If we get a 404 or 500 error, the campaign might have been deleted
+      // Remove it from the progress tracking
+      if (error.response && (error.response.status === 404 || error.response.status === 500)) {
+        console.log(`Campaign ${campaignId} appears to be deleted or inaccessible, removing from progress tracking`);
+        
+        // Remove this campaign from progress state
+        setCampaignProgress(prev => {
+          const newState = { ...prev };
+          delete newState[campaignId];
+          return newState;
+        });
+        
+        // Also check if it's still in our campaigns list and remove it if needed
+        const campaignExists = campaigns.some(c => c.id === campaignId);
+        if (campaignExists) {
+          console.log(`Removing deleted campaign ${campaignId} from campaigns list`);
+          setCampaigns(prevCampaigns => 
+            prevCampaigns.filter(campaign => campaign.id !== campaignId)
+          );
+        }
+      }
     }
   };
 
@@ -161,7 +190,10 @@ function Dashboard() {
       
       // Poll each in-progress campaign
       currentInProgressCampaigns.forEach(campaign => {
-        fetchCampaignProgress(campaign.id);
+        // Skip campaigns that might have been deleted
+        if (campaign && campaign.id) {
+          fetchCampaignProgress(campaign.id);
+        }
       });
     }, 30000); // Poll every 30 seconds
     
@@ -179,32 +211,97 @@ function Dashboard() {
 
   const handleDelete = async () => {
     try {
-      await api.delete(`/campaigns/${campaignToDelete.id}`);
-      
-      // Update the campaigns state directly instead of fetching again
-      setCampaigns(prevCampaigns => 
-        prevCampaigns.filter(campaign => campaign.id !== campaignToDelete.id)
-      );
-      
-      addToast('Campaign deleted successfully', 'success');
-      setDeleteModalOpen(false);
-      setCampaignToDelete(null);
-    } catch (error) {
-      console.error('Error deleting campaign:', error);
-      
-      // Show more specific error message
-      let errorMessage = 'Failed to delete campaign';
-      if (error.response) {
-        if (error.response.status === 404) {
-          errorMessage = 'Campaign not found. It may have been already deleted.';
-        } else if (error.response.status === 403) {
-          errorMessage = 'You are not authorized to delete this campaign.';
-        } else if (error.response.data && error.response.data.message) {
-          errorMessage = error.response.data.message;
+      // First check if the campaign is active
+      if (campaignToDelete.status === 'in_progress' || campaignToDelete.status === 'scheduled' || campaignToDelete.status === 'paused') {
+        // Show toast to indicate we're preparing the campaign for deletion
+        addToast('Preparing campaign for deletion...', 'info');
+        
+        try {
+          // Pause the campaign first to prevent processing errors (if not already paused)
+          if (campaignToDelete.status !== 'paused') {
+            await api.post(`/campaigns/${campaignToDelete.id}/pause`);
+            
+            // Update the campaign status locally to show it's paused
+            setCampaignToDelete(prev => ({...prev, status: 'paused'}));
+            
+            // Also update in the main campaigns list
+            setCampaigns(prevCampaigns => 
+              prevCampaigns.map(campaign => 
+                campaign.id === campaignToDelete.id 
+                  ? { ...campaign, status: 'paused' } 
+                  : campaign
+              )
+            );
+            
+            addToast('Campaign paused. Waiting for server to process...', 'info');
+          }
+          
+          // Wait for server to process the pause
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
+        } catch (pauseError) {
+          console.error('Error pausing campaign before deletion:', pauseError);
+          addToast('Could not pause campaign, proceeding with deletion anyway', 'warning');
         }
       }
       
-      addToast(errorMessage, 'error');
+      // Now delete the campaign
+      addToast('Deleting campaign...', 'info');
+      
+      try {
+        await api.delete(`/campaigns/${campaignToDelete.id}`);
+        
+        // Update the campaigns state directly instead of fetching again
+        setCampaigns(prevCampaigns => 
+          prevCampaigns.filter(campaign => campaign.id !== campaignToDelete.id)
+        );
+        
+        // Also remove from progress tracking
+        setCampaignProgress(prev => {
+          const newState = { ...prev };
+          delete newState[campaignToDelete.id];
+          return newState;
+        });
+        
+        addToast('Campaign deleted successfully', 'success');
+      } catch (deleteError) {
+        console.error('Error deleting campaign:', deleteError);
+        
+        // If we get a 404, the campaign is already gone
+        if (deleteError.response && deleteError.response.status === 404) {
+          // Update the campaigns state to remove it
+          setCampaigns(prevCampaigns => 
+            prevCampaigns.filter(campaign => campaign.id !== campaignToDelete.id)
+          );
+          
+          // Also remove from progress tracking
+          setCampaignProgress(prev => {
+            const newState = { ...prev };
+            delete newState[campaignToDelete.id];
+            return newState;
+          });
+          
+          addToast('Campaign deleted successfully', 'success');
+        } else {
+          // For other errors, show the error message
+          let errorMessage = 'Failed to delete campaign';
+          if (deleteError.response && deleteError.response.data && deleteError.response.data.message) {
+            errorMessage = deleteError.response.data.message;
+          }
+          addToast(errorMessage, 'error');
+          
+          // Return early to keep the modal open
+          return;
+        }
+      }
+      
+      // Close the modal and reset state
+      setDeleteModalOpen(false);
+      setCampaignToDelete(null);
+      
+    } catch (error) {
+      console.error('Unexpected error in delete process:', error);
+      addToast('An unexpected error occurred', 'error');
     }
   };
 

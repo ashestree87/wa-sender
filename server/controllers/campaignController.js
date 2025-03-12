@@ -106,6 +106,18 @@ exports.deleteCampaign = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to delete this campaign' });
     }
     
+    // If campaign is in progress, pause it first
+    if (campaign.status === 'in_progress') {
+      try {
+        await Campaign.update(id, { status: 'paused' });
+        // Give a moment for any in-flight processes to recognize the pause
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (pauseError) {
+        console.error('Error pausing campaign before deletion:', pauseError);
+        // Continue with deletion even if pause fails
+      }
+    }
+    
     // Delete associated recipients first to avoid foreign key constraints
     await Recipient.deleteByCampaignId(id);
     
@@ -378,198 +390,351 @@ exports.skipRecipient = async (req, res) => {
 
 // Helper function to process campaign in background
 async function processCampaign(campaign, recipients, userId) {
-  const whatsappService = require('../services/automation/whatsappService');
-  const aiService = require('../services/ai/openaiService');
-  
   try {
-    console.log(`Starting campaign execution: ${campaign.name}`);
-    
-    // Update campaign status to in_progress
-    await Campaign.updateStatus(campaign.id, 'in_progress');
-    
-    for (const recipient of recipients) {
-      try {
-        // Check if campaign has been paused
-        const currentCampaign = await Campaign.findById(campaign.id);
-        if (currentCampaign.status === 'paused') {
-          console.log(`Campaign ${campaign.name} has been paused. Stopping execution.`);
-          return; // Exit the function early
-        }
-        
-        // Skip already processed or skipped recipients
-        if (recipient.status !== 'pending') {
-          console.log(`Skipping recipient ${recipient.name}: status is ${recipient.status}`);
-          continue;
-        }
-        
-        // Check if recipient has been skipped (in case it was skipped while processing)
-        const updatedRecipient = await Recipient.findById(recipient.id);
-        if (updatedRecipient.status === 'skipped') {
-          console.log(`Recipient ${recipient.name} was skipped during processing`);
-          continue;
-        }
-        
-        // Update recipient status to processing
-        await Recipient.updateStatus(recipient.id, 'processing');
-        
-        // Prepare message
-        let finalMessage = campaign.message_template;
-        
-        // Replace placeholders
-        finalMessage = finalMessage.replace(/{name}/g, recipient.name);
-        
-        // Apply AI enhancement if enabled
-        if (campaign.use_ai && campaign.ai_prompt) {
-          try {
-            const enhancedMessage = await aiService.enhanceMessage(
-              finalMessage, 
-              campaign.ai_prompt,
-              recipient.name
-            );
-            finalMessage = enhancedMessage || finalMessage;
-          } catch (aiError) {
-            console.error('AI enhancement error:', aiError);
-            // Continue with original message if AI fails
-          }
-        }
-        
-        // Save the final message
-        await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
-        
-        // Send the message
-        const result = await whatsappService.sendMessage(
-          recipient.phone_number, 
-          finalMessage
-        );
-        
-        if (result.success) {
-          await Recipient.updateStatus(recipient.id, 'sent', new Date());
-          console.log(`Message sent to ${recipient.name} (${recipient.phone_number})`);
-        } else {
-          await Recipient.updateStatus(
-            recipient.id, 
-            'failed', 
-            null, 
-            result.error
-          );
-          console.error(`Failed to send message to ${recipient.name}:`, result.error);
-        }
-        
-        // Add a delay between messages to avoid spam detection
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-      } catch (recipientError) {
-        console.error(`Error processing recipient ${recipient.name}:`, recipientError);
-        await Recipient.updateStatus(
-          recipient.id, 
-          'failed', 
-          null, 
-          recipientError.message
-        );
-      }
+    // First check if campaign still exists
+    const campaignStillExists = await Campaign.findById(campaign.id);
+    if (!campaignStillExists) {
+      console.log(`Campaign ${campaign.id} no longer exists, skipping processing`);
+      return; // Exit early if campaign doesn't exist
     }
     
-    // Update campaign status to completed
-    await Campaign.updateStatus(campaign.id, 'completed');
-    console.log(`Campaign execution completed: ${campaign.name}`);
+    // Initialize WhatsApp service
+    const whatsappService = require('../services/automation/whatsappService');
+    const aiService = require('../services/ai/messageGenerationService');
     
-  } catch (error) {
-    console.error('Campaign processing error:', error);
-    await Campaign.updateStatus(campaign.id, 'failed');
-  }
-}
-
-// Helper function to process failed recipients in background
-async function processFailedRecipients(campaign, recipients, userId) {
-  const whatsappService = require('../services/automation/whatsappService');
-  const aiService = require('../services/ai/openaiService');
-  
-  try {
-    console.log(`Starting resend for failed messages in campaign: ${campaign.name}`);
-    
-    for (const recipient of recipients) {
+    // Initialize WhatsApp
+    try {
+      await whatsappService.initialize(userId);
+    } catch (initError) {
+      console.error('Error initializing WhatsApp:', initError);
+      
+      // Try to update campaign status if it still exists
       try {
-        // Update recipient status to processing
-        await Recipient.updateStatus(recipient.id, 'processing');
+        const stillExists = await Campaign.findById(campaign.id);
+        if (stillExists) {
+          await Campaign.updateStatus(campaign.id, 'paused');
+        }
+      } catch (updateError) {
+        console.error('Error updating campaign status after init failure:', updateError);
+      }
+      return;
+    }
+    
+    // Process each recipient
+    for (const recipient of recipients) {
+      // Check if campaign is still active before processing each recipient
+      try {
+        const currentCampaign = await Campaign.findById(campaign.id);
+        if (!currentCampaign) {
+          console.log(`Campaign ${campaign.id} no longer exists, stopping processing`);
+          return;
+        }
         
-        // Prepare message
-        let finalMessage = recipient.message || campaign.message_template;
+        if (currentCampaign.status !== 'in_progress') {
+          console.log(`Campaign ${campaign.id} is no longer in progress (status: ${currentCampaign.status}), stopping processing`);
+          return;
+        }
         
-        // Replace placeholders if using the template again
-        if (!recipient.message) {
-          finalMessage = finalMessage.replace(/{name}/g, recipient.name);
+        // Check if recipient still exists
+        const recipientExists = await Recipient.findById(recipient.id);
+        if (!recipientExists) {
+          console.log(`Recipient ${recipient.id} no longer exists, skipping`);
+          continue;
+        }
+        
+        try {
+          // Update recipient status to processing
+          try {
+            await Recipient.updateStatus(recipient.id, 'processing');
+          } catch (statusError) {
+            console.error(`Error updating recipient ${recipient.id} status to processing:`, statusError);
+            // Continue anyway
+          }
           
-          // Apply AI enhancement if enabled
-          if (campaign.use_ai && campaign.ai_prompt) {
+          // Generate message content
+          let messageContent;
+          if (campaign.use_ai) {
             try {
-              const enhancedMessage = await aiService.enhanceMessage(
-                finalMessage, 
+              messageContent = await aiService.generateMessage(
+                campaign.message_template,
                 campaign.ai_prompt,
                 recipient.name
               );
-              finalMessage = enhancedMessage || finalMessage;
             } catch (aiError) {
-              console.error('AI enhancement error:', aiError);
-              // Continue with original message if AI fails
+              console.error('Error generating AI message:', aiError);
+              // Fallback to template
+              messageContent = campaign.message_template.replace('{name}', recipient.name || 'there');
             }
+          } else {
+            // Use template with basic name replacement
+            messageContent = campaign.message_template.replace('{name}', recipient.name || 'there');
           }
           
-          // Save the final message
-          await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
+          // Store the generated message
+          try {
+            await Recipient.updateStatus(recipient.id, 'processing', null, null, messageContent);
+          } catch (updateError) {
+            console.error(`Error storing message for recipient ${recipient.id}:`, updateError);
+            // Continue anyway
+          }
+          
+          // Send the message
+          let result;
+          try {
+            result = await whatsappService.sendMessage(recipient.phone_number, messageContent);
+          } catch (sendError) {
+            console.error(`Error sending message to ${recipient.phone_number}:`, sendError);
+            
+            // Try to update recipient status
+            try {
+              await Recipient.updateStatus(recipient.id, 'failed', null, sendError.message);
+            } catch (updateError) {
+              console.error(`Error updating recipient status after send failure:`, updateError);
+            }
+            
+            // Skip to next recipient
+            continue;
+          }
+          
+          // Update recipient status based on result
+          try {
+            if (result.success) {
+              await Recipient.updateStatus(recipient.id, 'sent', new Date());
+              console.log(`Message sent to ${recipient.name} (${recipient.phone_number})`);
+            } else {
+              await Recipient.updateStatus(
+                recipient.id, 
+                'failed', 
+                null, 
+                result.error
+              );
+              console.error(`Failed to send message to ${recipient.name}:`, result.error);
+            }
+          } catch (statusUpdateError) {
+            console.error(`Error updating recipient status after send:`, statusUpdateError);
+          }
+          
+          // Add a delay between messages to avoid spam detection
+          await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+          
+        } catch (recipientError) {
+          console.error(`Error processing recipient ${recipient.name}:`, recipientError);
+          
+          // Try to update recipient status
+          try {
+            await Recipient.updateStatus(
+              recipient.id, 
+              'failed', 
+              null, 
+              recipientError.message
+            );
+          } catch (updateError) {
+            console.error(`Error updating recipient status after processing error:`, updateError);
+          }
         }
-        
-        // Send the message
-        const result = await whatsappService.sendMessage(
-          recipient.phone_number, 
-          finalMessage
-        );
-        
-        if (result.success) {
-          await Recipient.updateStatus(recipient.id, 'sent', { sent_at: new Date() });
-          console.log(`Message resent to ${recipient.name} (${recipient.phone_number})`);
-        } else {
-          await Recipient.updateStatus(
-            recipient.id, 
-            'failed', 
-            { failure_reason: result.error }
-          );
-          console.error(`Failed to resend message to ${recipient.name}:`, result.error);
-        }
-        
-        // Add a delay between messages to avoid spam detection
-        await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-        
-      } catch (recipientError) {
-        console.error(`Error processing recipient ${recipient.name}:`, recipientError);
-        await Recipient.updateStatus(
-          recipient.id, 
-          'failed', 
-          { failure_reason: recipientError.message }
-        );
+      } catch (checkError) {
+        console.error(`Error checking campaign/recipient status:`, checkError);
+        // Continue to next recipient
       }
     }
     
-    // Check if all recipients are processed
-    const allRecipients = await Recipient.findByCampaignId(campaign.id);
-    const pendingRecipients = allRecipients.filter(r => ['pending', 'processing'].includes(r.status));
+    // Check if campaign still exists before final update
+    try {
+      const finalCampaign = await Campaign.findById(campaign.id);
+      if (!finalCampaign) {
+        console.log(`Campaign ${campaign.id} no longer exists, skipping final status update`);
+        return;
+      }
+      
+      // Update campaign status to completed
+      await Campaign.updateStatus(campaign.id, 'completed');
+      console.log(`Campaign execution completed: ${campaign.name}`);
+    } catch (finalUpdateError) {
+      console.error(`Error in final campaign status update:`, finalUpdateError);
+    }
     
-    if (pendingRecipients.length === 0) {
-      // Update campaign status to completed if no pending recipients
-      await Campaign.update(campaign.id, { status: 'completed' });
-      console.log(`Campaign resend completed: ${campaign.name}`);
+  } catch (error) {
+    console.error('Campaign processing error:', error);
+    
+    // Try to update campaign status if it still exists
+    try {
+      const stillExists = await Campaign.findById(campaign.id);
+      if (stillExists) {
+        await Campaign.updateStatus(campaign.id, 'failed');
+      }
+    } catch (updateError) {
+      console.error('Error updating campaign status after processing error:', updateError);
+    }
+  } finally {
+    // We intentionally don't close the WhatsApp browser to keep it open for future campaigns
+    console.log('Campaign processing completed, keeping WhatsApp browser open for future use');
+    
+    // Just log any errors that occurred during processing
+    if (this.processingErrors && this.processingErrors.length > 0) {
+      console.error('Errors occurred during campaign processing:', this.processingErrors);
+      this.processingErrors = [];
+    }
+  }
+}
+
+// Update the processFailedRecipients function to handle database connection issues
+async function processFailedRecipients(campaign, recipients, userId) {
+  try {
+    // Initialize WhatsApp service
+    const whatsappService = require('../services/automation/whatsappService');
+    const aiService = require('../services/ai/messageGenerationService');
+    
+    // Process each recipient
+    for (const recipient of recipients) {
+      // Check if campaign still exists before processing each recipient
+      try {
+        const campaignStillExists = await Campaign.findById(campaign.id);
+        if (!campaignStillExists) {
+          console.log(`Campaign ${campaign.id} no longer exists, stopping processing`);
+          return; // Exit early if campaign doesn't exist
+        }
+        
+        // Check if recipient still exists
+        const recipientStillExists = await Recipient.findById(recipient.id);
+        if (!recipientStillExists) {
+          console.log(`Recipient ${recipient.id} no longer exists, skipping`);
+          continue; // Skip to next recipient
+        }
+        
+        // Check if campaign status has changed to paused or something else
+        if (campaignStillExists.status !== 'in_progress') {
+          console.log(`Campaign ${campaign.id} is no longer in progress (status: ${campaignStillExists.status}), stopping processing`);
+          return;
+        }
+        
+        try {
+          // Update recipient status to processing
+          await Recipient.updateStatus(recipient.id, 'processing');
+          
+          // Prepare message
+          let finalMessage = recipient.message || campaign.message_template;
+          
+          // Replace placeholders if using the template again
+          if (!recipient.message) {
+            finalMessage = finalMessage.replace(/{name}/g, recipient.name);
+            
+            // Apply AI enhancement if enabled
+            if (campaign.use_ai && campaign.ai_prompt) {
+              try {
+                const enhancedMessage = await aiService.enhanceMessage(
+                  finalMessage, 
+                  campaign.ai_prompt,
+                  recipient.name
+                );
+                finalMessage = enhancedMessage || finalMessage;
+              } catch (aiError) {
+                console.error('AI enhancement error:', aiError);
+                // Continue with original message if AI fails
+              }
+            }
+            
+            // Save the final message - wrap in try/catch
+            try {
+              await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
+            } catch (updateError) {
+              console.error(`Error updating recipient message: ${updateError.message}`);
+              // Continue even if update fails
+            }
+          }
+          
+          // Send the message
+          const result = await whatsappService.sendMessage(
+            recipient.phone_number, 
+            finalMessage
+          );
+          
+          // Update status based on result - wrap in try/catch
+          try {
+            if (result.success) {
+              await Recipient.updateStatus(recipient.id, 'sent', { sent_at: new Date() });
+              console.log(`Message resent to ${recipient.name} (${recipient.phone_number})`);
+            } else {
+              await Recipient.updateStatus(
+                recipient.id, 
+                'failed', 
+                { failure_reason: result.error }
+              );
+              console.error(`Failed to resend message to ${recipient.name}:`, result.error);
+            }
+          } catch (statusUpdateError) {
+            console.error(`Error updating recipient status: ${statusUpdateError.message}`);
+            // Continue processing other recipients even if update fails
+          }
+          
+          // Add a delay between messages to avoid spam detection
+          await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+          
+        } catch (recipientError) {
+          console.error(`Error processing recipient ${recipient.name}:`, recipientError);
+          
+          // Wrap status update in try/catch
+          try {
+            await Recipient.updateStatus(
+              recipient.id, 
+              'failed', 
+              { failure_reason: recipientError.message }
+            );
+          } catch (updateError) {
+            console.error(`Error updating recipient failure status: ${updateError.message}`);
+          }
+        }
+      } catch (checkError) {
+        console.error(`Error checking campaign/recipient existence: ${checkError.message}`);
+        // Continue to next recipient
+      }
+    }
+    
+    // Check if all recipients are processed - wrap in try/catch
+    try {
+      // Check if campaign still exists before final status update
+      const campaignStillExists = await Campaign.findById(campaign.id);
+      if (!campaignStillExists) {
+        console.log(`Campaign ${campaign.id} no longer exists, skipping final status update`);
+        return;
+      }
+      
+      const allRecipients = await Recipient.findByCampaignId(campaign.id);
+      const pendingRecipients = allRecipients.filter(r => ['pending', 'processing'].includes(r.status));
+      
+      if (pendingRecipients.length === 0) {
+        // Update campaign status to completed if no pending recipients
+        await Campaign.update(campaign.id, { status: 'completed' });
+        console.log(`Campaign resend completed: ${campaign.name}`);
+      }
+    } catch (finalCheckError) {
+      console.error(`Error in final campaign status check: ${finalCheckError.message}`);
     }
     
   } catch (error) {
     console.error('Failed recipients processing error:', error);
+    // Don't throw - this is a background process
   }
 }
 
 // Helper function to process a single recipient
 async function processSingleRecipient(campaign, recipient, userId) {
-  const whatsappService = require('../services/automation/whatsappService');
-  const aiService = require('../services/ai/openaiService');
-  
   try {
+    // Check if campaign and recipient still exist
+    const campaignExists = await Campaign.findById(campaign.id);
+    if (!campaignExists) {
+      console.log(`Campaign ${campaign.id} no longer exists, skipping recipient processing`);
+      return;
+    }
+    
+    const recipientExists = await Recipient.findById(recipient.id);
+    if (!recipientExists) {
+      console.log(`Recipient ${recipient.id} no longer exists, skipping processing`);
+      return;
+    }
+    
+    const whatsappService = require('../services/automation/whatsappService');
+    const aiService = require('../services/ai/messageGenerationService');
+    
     console.log(`Starting resend for recipient: ${recipient.name}`);
     
     // Prepare message
@@ -594,35 +759,68 @@ async function processSingleRecipient(campaign, recipient, userId) {
         }
       }
       
-      // Save the final message
-      await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
+      // Save the final message with error handling
+      try {
+        await Recipient.updateStatus(recipient.id, 'processing', null, null, finalMessage);
+      } catch (updateError) {
+        console.error(`Error updating recipient message: ${updateError.message}`);
+        // Continue even if update fails
+      }
     }
     
-    // Send the message
-    const result = await whatsappService.sendMessage(
-      recipient.phone_number, 
-      finalMessage
-    );
-    
-    if (result.success) {
-      await Recipient.updateStatus(recipient.id, 'sent', { sent_at: new Date() });
-      console.log(`Message resent to ${recipient.name} (${recipient.phone_number})`);
-    } else {
-      await Recipient.updateStatus(
-        recipient.id, 
-        'failed', 
-        { failure_reason: result.error }
+    // Send the message with error handling
+    try {
+      const result = await whatsappService.sendMessage(
+        recipient.phone_number, 
+        finalMessage
       );
-      console.error(`Failed to resend message to ${recipient.name}:`, result.error);
+      
+      // Update status with error handling
+      try {
+        if (result.success) {
+          await Recipient.updateStatus(recipient.id, 'sent', { sent_at: new Date() });
+          console.log(`Message resent to ${recipient.name} (${recipient.phone_number})`);
+        } else {
+          await Recipient.updateStatus(
+            recipient.id, 
+            'failed', 
+            { failure_reason: result.error }
+          );
+          console.error(`Failed to resend message to ${recipient.name}:`, result.error);
+        }
+      } catch (statusError) {
+        console.error(`Error updating recipient status: ${statusError.message}`);
+      }
+    } catch (sendError) {
+      console.error(`Error sending message to ${recipient.name}:`, sendError);
+      
+      // Try to update status
+      try {
+        await Recipient.updateStatus(
+          recipient.id, 
+          'failed', 
+          { failure_reason: sendError.message }
+        );
+      } catch (updateError) {
+        console.error(`Error updating recipient failure status: ${updateError.message}`);
+      }
     }
     
   } catch (error) {
-    console.error(`Error processing recipient ${recipient.name}:`, error);
-    await Recipient.updateStatus(
-      recipient.id, 
-      'failed', 
-      { failure_reason: error.message }
-    );
+    console.error(`Error processing recipient ${recipient?.name || 'unknown'}:`, error);
+    
+    // Try to update status if we have a recipient ID
+    if (recipient && recipient.id) {
+      try {
+        await Recipient.updateStatus(
+          recipient.id, 
+          'failed', 
+          { failure_reason: error.message }
+        );
+      } catch (updateError) {
+        console.error(`Error updating recipient failure status: ${updateError.message}`);
+      }
+    }
   }
 }
 
@@ -761,4 +959,45 @@ exports.resumeCampaign = async (req, res) => {
     console.error('Resume campaign error:', error);
     res.status(500).json({ message: 'Failed to resume campaign', error: error.message });
   }
-}; 
+};
+
+// Update the processRecipient function to handle deleted campaigns/recipients
+async function processRecipient(recipient, campaign, userId) {
+  try {
+    // Check if campaign still exists before processing
+    const campaignStillExists = await Campaign.findById(campaign.id);
+    if (!campaignStillExists) {
+      console.log(`Campaign ${campaign.id} no longer exists, skipping recipient ${recipient.id}`);
+      return;
+    }
+    
+    // Check if recipient still exists
+    const recipientStillExists = await Recipient.findById(recipient.id);
+    if (!recipientStillExists) {
+      console.log(`Recipient ${recipient.id} no longer exists, skipping processing`);
+      return;
+    }
+    
+    // Rest of your existing recipient processing logic...
+    
+  } catch (error) {
+    console.error(`Error processing recipient ${recipient.name}:`, error);
+    
+    try {
+      // Check if recipient still exists before updating
+      const recipientStillExists = await Recipient.findById(recipient.id);
+      if (recipientStillExists) {
+        await Recipient.updateStatus(
+          recipient.id, 
+          'failed', 
+          { failure_reason: error.message }
+        );
+      } else {
+        console.log(`Recipient ${recipient.id} was deleted during processing, skipping status update`);
+      }
+    } catch (updateError) {
+      console.error(`Could not update recipient ${recipient.id} status:`, updateError);
+      // Don't throw, just log
+    }
+  }
+} 

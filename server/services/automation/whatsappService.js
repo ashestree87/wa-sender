@@ -70,6 +70,13 @@ class WhatsAppService {
         // Handle browser disconnection
         this.browser.on('disconnected', () => {
           console.log('Browser disconnected');
+          
+          // Only log as an error if it wasn't an intentional close
+          if (!this._intentionalClose) {
+            console.error('Browser disconnected unexpectedly');
+          }
+          
+          // Reset state
           this.browser = null;
           this.page = null;
           this.isAuthenticated = false;
@@ -349,168 +356,228 @@ class WhatsAppService {
   }
   
   async sendMessage(phoneNumber, message) {
-    if (!this.isAuthenticated) {
-      return { success: false, error: 'Not authenticated to WhatsApp Web' };
-    }
-    
     try {
+      // Check if browser is connected
+      const isConnected = await this.isConnected();
+      if (!isConnected) {
+        console.log('Browser is not connected, cannot send message');
+        return { success: false, error: 'Browser not connected' };
+      }
+      
       // Format phone number (remove any non-numeric characters)
       const formattedNumber = phoneNumber.replace(/\D/g, '');
       
-      console.log(`Sending message to ${formattedNumber}`);
-      
-      // Always use direct URL navigation which is more reliable
-      console.log('Using direct URL navigation to chat');
-      await this.page.goto(`https://web.whatsapp.com/send?phone=${formattedNumber}`, { 
-        waitUntil: 'networkidle2',
-        timeout: 60000
-      });
-      
-      // Wait for chat to load - try multiple selectors
-      const chatSelectors = [
-        'div[data-testid="conversation-panel-wrapper"]',
-        'div[data-testid="conversation-panel"]',
-        'footer',
-        'div[data-testid="compose-box"]'
-      ];
-      
-      let chatLoaded = false;
-      for (const selector of chatSelectors) {
-        try {
-          await this.page.waitForSelector(selector, { 
-            timeout: 15000,
-            visible: true 
-          });
-          console.log(`Chat loaded (found ${selector})`);
-          chatLoaded = true;
-          break;
-        } catch (err) {
-          // Try next selector
-        }
+      // Check if the page is still valid
+      if (!this.page) {
+        return { success: false, error: 'WhatsApp page not initialized' };
       }
       
-      if (!chatLoaded) {
-        throw new Error('Could not find chat input field');
-      }
-      
-      // Wait a moment for the chat to fully load
-      await this.waitForTimeout(1000);
-      
-      // Find and focus the input field using JavaScript
-      const inputFocused = await this.page.evaluate(() => {
-        try {
-          // Look for the footer first
-          const footer = document.querySelector('footer');
-          if (!footer) return { success: false, error: 'No footer found' };
-          
-          // Find the input within the footer
-          const input = footer.querySelector('div[contenteditable="true"]') || 
-                        footer.querySelector('div[role="textbox"]') ||
-                        footer.querySelector('div[data-tab="10"]');
-          
-          if (!input) {
-            // Try to find any contenteditable div in the page
-            const allInputs = document.querySelectorAll('div[contenteditable="true"]');
-            // Filter out the search box
-            const messageInputs = Array.from(allInputs).filter(el => {
-              // Skip elements that are in the search area or have search-related attributes
-              const isSearchBox = el.closest('[data-testid="chat-list-search"]') || 
-                                 el.getAttribute('data-testid')?.includes('search') ||
-                                 el.getAttribute('aria-label')?.includes('Search');
-              return !isSearchBox;
-            });
-            
-            if (messageInputs.length === 0) return { success: false, error: 'No message input found' };
-            
-            // Use the last one as it's likely the message input
-            messageInputs[messageInputs.length - 1].focus();
-            return { success: true, method: 'filtered contenteditable' };
+      // Try to use WhatsApp Web API if available
+      try {
+        const chatOpened = await this.page.evaluate((number) => {
+          if (window.WAPI && window.WAPI.openChat) {
+            return window.WAPI.openChat(`${number}@c.us`);
           }
-          
-          // Focus the input
-          input.focus();
-          return { success: true, method: 'footer input' };
-        } catch (error) {
-          return { success: false, error: error.toString() };
+          return false;
+        }, formattedNumber);
+        
+        if (chatOpened) {
+          console.log(`Chat opened for ${formattedNumber} using WAPI`);
+        } else {
+          // Fall back to URL navigation
+          await this.page.goto(`https://web.whatsapp.com/send?phone=${formattedNumber}&text=${encodeURIComponent(message)}`, {
+            waitUntil: 'networkidle0',
+            timeout: 60000
+          });
         }
-      });
-      
-      console.log('Input focus result:', inputFocused);
-      
-      if (!inputFocused.success) {
-        throw new Error(`Failed to focus input: ${inputFocused.error}`);
+      } catch (apiError) {
+        console.error('Error using WAPI, falling back to URL navigation:', apiError);
+        
+        // Fall back to URL navigation
+        await this.page.goto(`https://web.whatsapp.com/send?phone=${formattedNumber}&text=${encodeURIComponent(message)}`, {
+          waitUntil: 'networkidle0',
+          timeout: 60000
+        });
       }
       
-      // Type the message with human-like delays
-      for (let i = 0; i < message.length; i++) {
-        // Check if the current character is a newline
-        if (message[i] === '\n') {
-          // Use Shift+Enter for newlines in WhatsApp
-          await this.page.keyboard.down('Shift');
-          await this.page.keyboard.press('Enter');
-          await this.page.keyboard.up('Shift');
-        } else {
-          // Type regular character
-          await this.page.keyboard.type(message[i]);
+      // Wait for chat to load
+      try {
+        await this.page.waitForSelector('footer, div[data-testid="conversation-panel-footer"]', { timeout: 30000 });
+        console.log('Chat loaded (found footer)');
+      } catch (selectorError) {
+        // Check if we got an invalid number error
+        const invalidNumberSelector = 'div[data-testid="popup-contents"]';
+        const invalidNumber = await this.page.$(invalidNumberSelector);
+        
+        if (invalidNumber) {
+          console.error(`Invalid phone number: ${phoneNumber}`);
+          return { success: false, error: 'Invalid phone number' };
         }
         
-        // Add random delay between keystrokes (20-80ms)
-        await this.waitForTimeout(Math.floor(Math.random() * 60) + 20);
+        console.error('Error waiting for chat to load:', selectorError);
+        return { success: false, error: 'Chat failed to load' };
       }
       
-      // Add a small delay before pressing Enter
-      await this.waitForTimeout(Math.floor(Math.random() * 300) + 200);
+      // If we used WAPI to open chat, we need to type the message
+      if (!message.includes(encodeURIComponent(message))) {
+        // Click on input field
+        try {
+          const inputSelector = 'div[contenteditable="true"][data-tab="10"]';
+          await this.page.waitForSelector(inputSelector, { timeout: 5000 });
+          await this.page.click(inputSelector);
+          
+          // Type message
+          await this.page.keyboard.type(message);
+        } catch (inputError) {
+          console.error('Error focusing input field:', inputError);
+          
+          // Try alternative method
+          const inputFocusResult = await this.page.evaluate(() => {
+            const inputs = [
+              document.querySelector('div[contenteditable="true"][data-tab="10"]'),
+              document.querySelector('div[role="textbox"]'),
+              document.querySelector('footer div[contenteditable="true"]'),
+              document.querySelector('div[data-testid="conversation-compose-box-input"]')
+            ];
+            
+            for (const input of inputs) {
+              if (input) {
+                try {
+                  input.focus();
+                  return { success: true, method: input.getAttribute('data-testid') || 'footer input' };
+                } catch (e) {
+                  // Try next input
+                }
+              }
+            }
+            
+            return { success: false, error: 'No input field found' };
+          });
+          
+          console.log('Input focus result:', inputFocusResult);
+          
+          if (!inputFocusResult.success) {
+            return { success: false, error: 'Could not focus input field' };
+          }
+          
+          // Type message
+          await this.page.keyboard.type(message);
+        }
+      }
       
-      // Send the message using Enter key
+      // Send message
       await this.page.keyboard.press('Enter');
       
       // Wait for message to be sent
-      const sentSelectors = [
-        'span[data-testid="msg-check"]',
-        'span[data-testid="msg-dblcheck"]',
-        'span[data-icon="msg-check"]',
-        'span[data-icon="msg-dblcheck"]'
-      ];
-      
-      let messageSent = false;
-      for (const selector of sentSelectors) {
-        try {
-          await this.page.waitForSelector(selector, { 
-            timeout: 10000 
-          });
-          console.log(`Message sent (found ${selector})`);
-          messageSent = true;
-          break;
-        } catch (err) {
-          // Try next selector
-        }
+      try {
+        // Look for double check mark or other sent indicators
+        await this.page.waitForFunction(() => {
+          const sentMarkers = [
+            document.querySelector('span[data-icon="msg-check"]'),
+            document.querySelector('span[data-icon="msg-dblcheck"]'),
+            document.querySelector('span[data-testid="msg-check"]'),
+            document.querySelector('span[data-testid="msg-dblcheck"]')
+          ];
+          
+          return sentMarkers.some(marker => marker !== null);
+        }, { timeout: 15000 });
+        
+        console.log('Message sent (found span[data-icon="msg-dblcheck"])');
+        return { success: true };
+      } catch (sentError) {
+        console.error('Error waiting for message to be sent:', sentError);
+        return { success: false, error: 'Message may not have been sent' };
       }
-      
-      if (!messageSent) {
-        console.log('Could not confirm message was sent, but continuing');
-      }
-      
-      // Add a shorter delay before the next message
-      await this.waitForTimeout(Math.floor(Math.random() * 1000) + 1000);
-      
-      return { success: true };
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('Error sending WhatsApp message:', error);
       return { success: false, error: error.message };
     }
   }
   
   async close() {
-    if (this.browser) {
-      await this.browser.close();
+    try {
+      if (this.browser) {
+        console.log('Closing WhatsApp browser session...');
+        
+        // Set a flag to indicate we're intentionally closing
+        this._intentionalClose = true;
+        
+        // Try to close gracefully
+        try {
+          await this.browser.close();
+          console.log('WhatsApp browser session closed successfully');
+        } catch (closeError) {
+          console.error('Error closing browser:', closeError);
+          // Try to force close if normal close fails
+          try {
+            if (this.browser.process()) {
+              this.browser.process().kill('SIGKILL');
+              console.log('Browser process killed');
+            }
+          } catch (killError) {
+            console.error('Error force-killing browser process:', killError);
+          }
+        }
+        
+        // Reset state regardless of close success
+        this.browser = null;
+        this.page = null;
+        this.isAuthenticated = false;
+        console.log('WhatsApp browser session state reset');
+      } else {
+        console.log('No active WhatsApp browser session to close');
+      }
+    } catch (error) {
+      console.error('Error in WhatsApp close method:', error);
+      // Reset state even if there's an error
       this.browser = null;
       this.page = null;
       this.isAuthenticated = false;
+    } finally {
+      // Clear the intentional close flag
+      this._intentionalClose = false;
     }
   }
 
   async waitForTimeout(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async ensureInitialized(userId) {
+    try {
+      // If browser is already initialized and authenticated, just return
+      if (this.browser && this.page && this.isAuthenticated) {
+        return true;
+      }
+      
+      // If browser exists but is not authenticated, try to authenticate
+      if (this.browser && this.page) {
+        const isAuth = await this.waitForAuthentication();
+        if (isAuth) {
+          return true;
+        }
+      }
+      
+      // Otherwise, initialize from scratch
+      return await this.initialize(userId);
+    } catch (error) {
+      console.error('Error ensuring WhatsApp is initialized:', error);
+      return false;
+    }
+  }
+
+  async isConnected() {
+    try {
+      if (!this.browser) {
+        return false;
+      }
+      
+      // Check if browser is connected
+      return !this.browser.disconnected;
+    } catch (error) {
+      console.error('Error checking browser connection:', error);
+      return false;
+    }
   }
 }
 
