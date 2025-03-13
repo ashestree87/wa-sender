@@ -42,6 +42,15 @@ function CampaignDetail() {
   const [importError, setImportError] = useState('');
   const fileInputRef = useRef(null);
 
+  // Add these new state variables for WhatsApp connections
+  const [whatsappConnections, setWhatsappConnections] = useState([]);
+  const [loadingConnections, setLoadingConnections] = useState(false);
+  const [selectedConnectionId, setSelectedConnectionId] = useState(null);
+  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
+
+  // Add this new state variable for the new connection name
+  const [newConnectionName, setNewConnectionName] = useState('');
+
   // Consolidated fetch function
   const fetchCampaignDetails = useCallback(async () => {
     try {
@@ -126,38 +135,138 @@ function CampaignDetail() {
     };
   }, [fetchCampaignDetails, campaign?.status]);
 
-  // Add a function to check WhatsApp status
+  // Add a function to fetch WhatsApp connections
+  const fetchWhatsappConnections = useCallback(async () => {
+    try {
+      setLoadingConnections(true);
+      const response = await api.get('/whatsapp/status');
+      
+      if (response.data.connections) {
+        setWhatsappConnections(response.data.connections);
+        
+        // If there's an authenticated connection, select it by default
+        const authenticatedConnection = response.data.connections.find(
+          conn => conn.status === 'authenticated' && !conn.needsReconnect
+        );
+        
+        if (authenticatedConnection) {
+          setSelectedConnectionId(authenticatedConnection.id);
+          setWhatsappConnected(true);
+        } else {
+          setWhatsappConnected(false);
+        }
+      } else {
+        // Handle legacy single connection format
+        const connection = {
+          id: 'default',
+          name: 'Default Connection',
+          status: response.data.status,
+          qrCode: response.data.qrCode,
+          phoneNumber: response.data.phoneNumber || 'Unknown'
+        };
+        setWhatsappConnections([connection]);
+        
+        if (connection.status === 'authenticated') {
+          setSelectedConnectionId('default');
+          setWhatsappConnected(true);
+        } else {
+          setWhatsappConnected(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching WhatsApp connections:', error);
+      setWhatsappConnections([]);
+      setWhatsappConnected(false);
+    } finally {
+      setLoadingConnections(false);
+      setCheckingWhatsapp(false);
+    }
+  }, []);
+
+  // Update the checkWhatsappStatus function to use fetchWhatsappConnections
   const checkWhatsappStatus = useCallback(async () => {
     try {
       setCheckingWhatsapp(true);
-      const response = await api.get('/whatsapp/status');
-      setWhatsappConnected(response.data.status === 'authenticated');
+      await fetchWhatsappConnections();
     } catch (error) {
       console.error('Error checking WhatsApp status:', error);
       setWhatsappConnected(false);
     } finally {
       setCheckingWhatsapp(false);
     }
-  }, []);
-  
-  // Check WhatsApp status when component mounts
+  }, [fetchWhatsappConnections]);
+
+  // Now we can use checkWhatsappStatus in the useEffect
   useEffect(() => {
     checkWhatsappStatus();
+    
+    // Set up polling for WhatsApp status every 30 seconds
+    const whatsappInterval = setInterval(checkWhatsappStatus, 30000);
+    
+    return () => {
+      clearInterval(whatsappInterval);
+    };
   }, [checkWhatsappStatus]);
 
+  // Update the initializeWhatsapp function to use the selected connection
+  const initializeWhatsapp = async (connectionId = selectedConnectionId) => {
+    try {
+      setInitializingWhatsapp(true);
+      setError(null);
+      
+      // Call the WhatsApp initialization endpoint with the connection ID
+      const response = await api.post('/whatsapp/initialize', { 
+        connectionId: connectionId || 'default'
+      });
+      
+      // Check if the response contains a success property or if the message indicates success
+      if (response.data.success || 
+          (response.data.message && 
+           response.data.message.toLowerCase().includes('authenticated'))) {
+        
+        addToast('WhatsApp initialized successfully', 'success');
+        // Check status again to update the UI
+        await fetchWhatsappConnections();
+      } else {
+        throw new Error(response.data.message || 'Failed to initialize WhatsApp');
+      }
+    } catch (error) {
+      // Check if the error message actually indicates success
+      if (error.response?.data?.message && 
+          error.response.data.message.toLowerCase().includes('authenticated')) {
+        
+        addToast('WhatsApp initialized successfully', 'success');
+        // Check status again to update the UI
+        await fetchWhatsappConnections();
+      } else {
+        console.error('Error initializing WhatsApp:', error);
+        setError(`Failed to initialize WhatsApp: ${error.response?.data?.message || error.message}`);
+        addToast(`Failed to initialize WhatsApp: ${error.response?.data?.message || error.message}`, 'error');
+      }
+    } finally {
+      setInitializingWhatsapp(false);
+    }
+  };
+
+  // Update the executeCampaign function to use the selected connection
   const executeCampaign = async () => {
     try {
       setExecuting(true);
       setError(null);
       
-      // First check if WhatsApp is connected
-      const whatsappStatus = await api.get('/whatsapp/status');
+      // Check if a connection is selected
+      if (!selectedConnectionId) {
+        throw new Error('Please select a WhatsApp connection first');
+      }
+      
+      // First check if the selected WhatsApp connection is connected
+      const whatsappStatus = await api.get(`/whatsapp/status?connectionId=${selectedConnectionId}`);
       if (whatsappStatus.data.status !== 'authenticated') {
-        throw new Error('WhatsApp is not connected. Please set up WhatsApp first.');
+        throw new Error('Selected WhatsApp connection is not authenticated. Please connect first.');
       }
       
       console.log('Attempting to execute campaign:', id);
-      const response = await api.post(`/campaigns/${id}/execute`);
+      const response = await api.post(`/campaigns/${id}/execute`, { connectionId: selectedConnectionId });
       console.log('Execute campaign response:', response.data);
       
       // The response doesn't have a success property, but it has a message and recipientCount
@@ -292,44 +401,6 @@ function CampaignDetail() {
     } catch (error) {
       console.error('Error resuming campaign:', error);
       addToast(`Failed to resume campaign: ${error.response?.data?.message || error.message}`, 'error');
-    }
-  };
-
-  // Add a function to initialize WhatsApp directly
-  const initializeWhatsapp = async () => {
-    try {
-      setInitializingWhatsapp(true);
-      setError(null);
-      
-      // Call the WhatsApp initialization endpoint
-      const response = await api.post('/whatsapp/initialize');
-      
-      // Check if the response contains a success property or if the message indicates success
-      if (response.data.success || 
-          (response.data.message && 
-           response.data.message.toLowerCase().includes('authenticated'))) {
-        
-        addToast('WhatsApp initialized successfully', 'success');
-        // Check status again to update the UI
-        await checkWhatsappStatus();
-      } else {
-        throw new Error(response.data.message || 'Failed to initialize WhatsApp');
-      }
-    } catch (error) {
-      // Check if the error message actually indicates success
-      if (error.response?.data?.message && 
-          error.response.data.message.toLowerCase().includes('authenticated')) {
-        
-        addToast('WhatsApp initialized successfully', 'success');
-        // Check status again to update the UI
-        await checkWhatsappStatus();
-      } else {
-        console.error('Error initializing WhatsApp:', error);
-        setError(`Failed to initialize WhatsApp: ${error.response?.data?.message || error.message}`);
-        addToast(`Failed to initialize WhatsApp: ${error.response?.data?.message || error.message}`, 'error');
-      }
-    } finally {
-      setInitializingWhatsapp(false);
     }
   };
 
@@ -589,6 +660,79 @@ function CampaignDetail() {
     });
   };
 
+  // Add a function to create a new WhatsApp connection
+  const createWhatsappConnection = async (name) => {
+    try {
+      setInitializingWhatsapp(true);
+      const response = await api.post('/whatsapp/connections', { name });
+      
+      if (response.data.success && response.data.connectionId) {
+        addToast(`WhatsApp connection "${name}" created`, 'success');
+        
+        // Initialize the new connection
+        await initializeWhatsapp(response.data.connectionId);
+        
+        // Refresh connections
+        await fetchWhatsappConnections();
+        
+        // Select the new connection
+        setSelectedConnectionId(response.data.connectionId);
+      } else {
+        throw new Error(response.data.message || 'Failed to create WhatsApp connection');
+      }
+    } catch (error) {
+      console.error('Error creating WhatsApp connection:', error);
+      addToast(`Failed to create connection: ${error.response?.data?.message || error.message}`, 'error');
+    } finally {
+      setInitializingWhatsapp(false);
+    }
+  };
+
+  // Add a function to delete a WhatsApp connection
+  const deleteWhatsappConnection = async (connectionId) => {
+    if (!window.confirm('Are you sure you want to delete this WhatsApp connection?')) {
+      return;
+    }
+    
+    try {
+      setLoadingConnections(true);
+      await api.delete(`/whatsapp/connections/${connectionId}`);
+      
+      addToast('WhatsApp connection deleted', 'success');
+      
+      // Refresh connections
+      await fetchWhatsappConnections();
+      
+      // If the deleted connection was selected, clear selection
+      if (selectedConnectionId === connectionId) {
+        setSelectedConnectionId(null);
+      }
+    } catch (error) {
+      console.error('Error deleting WhatsApp connection:', error);
+      addToast(`Failed to delete connection: ${error.response?.data?.message || error.message}`, 'error');
+    } finally {
+      setLoadingConnections(false);
+    }
+  };
+
+  // Add a function to logout from a WhatsApp connection
+  const logoutWhatsappConnection = async (connectionId) => {
+    try {
+      setLoadingConnections(true);
+      await api.post('/whatsapp/logout', { connectionId });
+      
+      addToast('Logged out from WhatsApp', 'success');
+      
+      // Refresh connections
+      await fetchWhatsappConnections();
+    } catch (error) {
+      console.error('Error logging out from WhatsApp:', error);
+      addToast(`Failed to logout: ${error.response?.data?.message || error.message}`, 'error');
+    } finally {
+      setLoadingConnections(false);
+    }
+  };
+
   if (loading) {
     return <div>Loading campaign details...</div>;
   }
@@ -621,7 +765,7 @@ function CampaignDetail() {
             Delete
           </button>
           
-          {/* Campaign action buttons - moved here */}
+          {/* Campaign action buttons */}
           {campaign.status === 'draft' && (
             whatsappConnected ? (
               <button
@@ -677,6 +821,135 @@ function CampaignDetail() {
           {error}
         </div>
       )}
+
+      {/* WhatsApp Connection Selection - moved outside the button container */}
+      <div className="bg-white shadow rounded-lg p-6 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">WhatsApp Connection</h2>
+          <div className="space-x-2">
+            <button
+              onClick={() => fetchWhatsappConnections()}
+              disabled={loadingConnections}
+              className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600 disabled:opacity-50 text-sm"
+            >
+              {loadingConnections ? 'Refreshing...' : 'Refresh'}
+            </button>
+            <button
+              onClick={() => setWhatsappModalOpen(true)}
+              className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-sm"
+            >
+              Manage Connections
+            </button>
+          </div>
+        </div>
+        
+        {loadingConnections ? (
+          <div className="flex items-center justify-center py-4">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-700 mr-3"></div>
+            <p className="text-blue-700">Loading connections...</p>
+          </div>
+        ) : whatsappConnections.length === 0 ? (
+          <div className="bg-yellow-50 p-4 rounded-lg">
+            <p className="text-yellow-700">No WhatsApp connections found.</p>
+            <button
+              onClick={() => setWhatsappModalOpen(true)}
+              className="mt-2 bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600 text-sm"
+            >
+              Set Up WhatsApp
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Select WhatsApp Connection
+              </label>
+              <select
+                value={selectedConnectionId || ''}
+                onChange={(e) => setSelectedConnectionId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">-- Select a connection --</option>
+                {whatsappConnections.map(conn => (
+                  <option 
+                    key={conn.id} 
+                    value={conn.id}
+                    disabled={conn.status !== 'authenticated'}
+                  >
+                    {conn.name} - {conn.status === 'authenticated' 
+                      ? `Connected (${conn.phoneNumber})` 
+                      : conn.status === 'awaiting_qr' 
+                        ? 'Waiting for QR scan' 
+                        : 'Not connected'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            {selectedConnectionId && (
+              <div className="mt-2">
+                {(() => {
+                  const selectedConn = whatsappConnections.find(c => c.id === selectedConnectionId);
+                  if (!selectedConn) return null;
+                  
+                  if (selectedConn.status === 'authenticated') {
+                    return (
+                      <div className="bg-green-50 p-3 rounded-lg">
+                        <p className="text-green-700 flex items-center">
+                          <span className="mr-2">✅</span>
+                          Connected as {selectedConn.phoneNumber}
+                        </p>
+                        {selectedConn.needsReconnect && (
+                          <div className="mt-2">
+                            <p className="text-yellow-600 text-sm">This connection needs to be refreshed.</p>
+                            <button
+                              onClick={() => initializeWhatsapp(selectedConn.id)}
+                              disabled={initializingWhatsapp}
+                              className="mt-1 bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600 disabled:opacity-50 text-sm"
+                            >
+                              {initializingWhatsapp ? 'Reconnecting...' : 'Reconnect'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  } else if (selectedConn.status === 'awaiting_qr') {
+                    return (
+                      <div className="bg-yellow-50 p-3 rounded-lg">
+                        <p className="text-yellow-700 mb-2">Scan the QR code to connect</p>
+                        {selectedConn.qrCode || selectedConn.qr_code ? (
+                          <div className="bg-white p-2 inline-block">
+                            <img 
+                              src={selectedConn.qrCode || selectedConn.qr_code} 
+                              alt="WhatsApp QR Code" 
+                              className="max-w-xs" 
+                            />
+                          </div>
+                        ) : (
+                          <p className="text-sm text-yellow-600">QR code not available. Try refreshing.</p>
+                        )}
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="bg-gray-50 p-3 rounded-lg">
+                        <p className="text-gray-700 mb-2">This connection is not active</p>
+                        <button
+                          onClick={() => initializeWhatsapp(selectedConn.id)}
+                          disabled={initializingWhatsapp}
+                          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 disabled:opacity-50 text-sm"
+                        >
+                          {initializingWhatsapp ? 'Connecting...' : 'Connect'}
+                        </button>
+                      </div>
+                    );
+                  }
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="bg-white shadow rounded-lg p-6 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1072,6 +1345,156 @@ function CampaignDetail() {
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* WhatsApp Connection Management Modal */}
+      <div className={`fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 ${whatsappModalOpen ? '' : 'hidden'}`}>
+        <div className="bg-white rounded-lg p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Manage WhatsApp Connections</h2>
+            <button
+              onClick={() => setWhatsappModalOpen(false)}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+            </button>
+          </div>
+          
+          {/* Add new connection form */}
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+            <h3 className="text-lg font-medium mb-2">Add New Connection</h3>
+            <div className="flex items-end gap-2">
+              <div className="flex-grow">
+                <label htmlFor="newConnectionName" className="block text-sm font-medium text-gray-700 mb-1">
+                  Connection Name
+                </label>
+                <input
+                  type="text"
+                  id="newConnectionName"
+                  value={newConnectionName}
+                  onChange={(e) => setNewConnectionName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="e.g. Business WhatsApp"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  if (newConnectionName.trim()) {
+                    createWhatsappConnection(newConnectionName);
+                    setNewConnectionName('');
+                  } else {
+                    addToast('Please enter a connection name', 'error');
+                  }
+                }}
+                disabled={initializingWhatsapp || !newConnectionName.trim()}
+                className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 disabled:opacity-50"
+              >
+                {initializingWhatsapp ? 'Creating...' : 'Add Connection'}
+              </button>
+            </div>
+          </div>
+          
+          {/* Connection list */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">Your Connections</h3>
+            
+            {loadingConnections ? (
+              <div className="flex items-center justify-center py-4">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-700 mr-3"></div>
+                <p className="text-blue-700">Loading connections...</p>
+              </div>
+            ) : whatsappConnections.length === 0 ? (
+              <p className="text-gray-500 py-4 text-center">No WhatsApp connections found.</p>
+            ) : (
+              whatsappConnections.map(connection => (
+                <div key={connection.id} className="border rounded-lg p-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-medium">{connection.name}</h4>
+                      <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs ${
+                        connection.status === 'authenticated' 
+                          ? 'bg-green-100 text-green-800' 
+                          : connection.status === 'awaiting_qr' 
+                            ? 'bg-yellow-100 text-yellow-800' 
+                            : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {connection.status === 'authenticated' 
+                          ? 'Connected' 
+                          : connection.status === 'awaiting_qr' 
+                            ? 'Waiting for QR scan' 
+                            : connection.status}
+                      </div>
+                      {connection.phoneNumber && (
+                        <p className="text-sm text-gray-600 mt-1">
+                          Phone: {connection.phoneNumber}
+                        </p>
+                      )}
+                    </div>
+                    
+                    <div className="flex space-x-2">
+                      {connection.status === 'authenticated' ? (
+                        <button
+                          onClick={() => logoutWhatsappConnection(connection.id)}
+                          disabled={loadingConnections}
+                          className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:opacity-50 text-sm"
+                        >
+                          Disconnect
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => initializeWhatsapp(connection.id)}
+                          disabled={initializingWhatsapp || connection.status === 'awaiting_qr'}
+                          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 disabled:opacity-50 text-sm"
+                        >
+                          {initializingWhatsapp ? 'Connecting...' : 'Connect'}
+                        </button>
+                      )}
+                      
+                      <button
+                        onClick={() => deleteWhatsappConnection(connection.id)}
+                        disabled={loadingConnections}
+                        className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600 disabled:opacity-50 text-sm"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Show QR code if awaiting scan */}
+                  {connection.status === 'awaiting_qr' && (connection.qrCode || connection.qr_code) && (
+                    <div className="mt-3 bg-yellow-50 p-3 rounded-lg">
+                      <p className="text-sm text-yellow-700 mb-2">Scan this QR code with WhatsApp:</p>
+                      <div className="bg-white p-2 inline-block">
+                        <img 
+                          src={connection.qrCode || connection.qr_code} 
+                          alt="WhatsApp QR Code" 
+                          className="max-w-xs" 
+                        />
+                      </div>
+                      <div className="mt-2 text-xs text-yellow-600">
+                        <p>1. Open WhatsApp on your phone</p>
+                        <p>2. Tap Settings (or ⋮) &gt; Linked Devices</p>
+                        <p>3. Tap "Link a Device"</p>
+                        <p>4. Point your phone camera at this QR code</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+          
+          <div className="mt-6 flex justify-end">
+            <button
+              onClick={() => setWhatsappModalOpen(false)}
+              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+            >
+              Done
+            </button>
+          </div>
         </div>
       </div>
     </div>
