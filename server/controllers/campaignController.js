@@ -1,6 +1,7 @@
 const Campaign = require('../models/Campaign');
 const Recipient = require('../models/Recipient');
 const schedulerService = require('../services/scheduler/schedulerService');
+const supabase = require('../config/database');
 
 // Create a new campaign
 exports.createCampaign = async (req, res) => {
@@ -357,34 +358,47 @@ exports.resendToRecipient = async (req, res) => {
 // Skip a recipient - simplified version
 exports.skipRecipient = async (req, res) => {
   try {
-    const { campaignId, recipientId } = req.params;
+    const { id, recipientId } = req.params;
+    console.log(`Attempting to skip recipient ${recipientId} for campaign ${id}`);
     
     // Check if campaign exists and user is authorized
-    const campaign = await Campaign.findById(campaignId);
+    const campaign = await Campaign.findById(id);
     
     if (!campaign) {
+      console.log(`Campaign ${id} not found`);
       return res.status(404).json({ message: 'Campaign not found' });
     }
     
-    if (campaign.user_id !== req.userId) {
-      return res.status(403).json({ message: 'Not authorized' });
+    if (String(campaign.user_id) !== String(req.userId)) {
+      console.log(`User ${req.userId} not authorized for campaign ${id} (owned by ${campaign.user_id})`);
+      return res.status(403).json({ message: 'Not authorized to modify this campaign' });
     }
     
-    // Check if recipient exists
-    const recipient = await Recipient.findById(recipientId);
+    // Find the recipient
+    console.log(`Finding recipient ${recipientId}`);
+    const recipient = await Campaign.getRecipient(id, recipientId);
     
     if (!recipient) {
+      console.log(`Recipient ${recipientId} not found`);
       return res.status(404).json({ message: 'Recipient not found' });
     }
     
-    // Simply update the status to 'skipped'
-    await Recipient.updateStatus(recipientId, 'skipped');
+    console.log(`Recipient found with status: ${recipient.status}`);
     
+    // Update recipient status to skipped
+    console.log(`Updating recipient ${recipientId} status to skipped`);
+    await Campaign.updateRecipientStatus(id, recipientId, 'skipped');
+    
+    console.log(`Successfully skipped recipient ${recipientId}`);
     res.json({ message: 'Recipient skipped successfully' });
     
   } catch (error) {
     console.error('Skip recipient error:', error);
-    res.status(500).json({ message: 'Failed to skip recipient', error: error.message });
+    res.status(500).json({ 
+      message: 'Failed to skip recipient', 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
@@ -1000,4 +1014,116 @@ async function processRecipient(recipient, campaign, userId) {
       // Don't throw, just log
     }
   }
-} 
+}
+
+// Update a recipient
+exports.updateRecipient = async (req, res) => {
+  try {
+    const { id, recipientId } = req.params;
+    console.log(`Attempting to update recipient ${recipientId} for campaign ${id}`);
+    
+    // Check if campaign exists and user is authorized
+    const campaign = await Campaign.findById(id);
+    
+    if (!campaign) {
+      console.log(`Campaign ${id} not found`);
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    if (String(campaign.user_id) !== String(req.userId)) {
+      console.log(`User ${req.userId} not authorized for campaign ${id} (owned by ${campaign.user_id})`);
+      return res.status(403).json({ message: 'Not authorized to modify this campaign' });
+    }
+    
+    // Find the recipient
+    const recipient = await Campaign.getRecipient(id, recipientId);
+    
+    if (!recipient) {
+      console.log(`Recipient ${recipientId} not found`);
+      return res.status(404).json({ message: 'Recipient not found' });
+    }
+    
+    // Update recipient with data from request body
+    const requestData = req.body;
+    console.log(`Updating recipient ${recipientId} with data:`, requestData);
+    
+    // Convert camelCase to snake_case for database columns
+    const updatedData = {};
+    if (requestData.name) updatedData.name = requestData.name;
+    if (requestData.phoneNumber) updatedData.phone_number = requestData.phoneNumber;
+    if (requestData.status) updatedData.status = requestData.status;
+    if (requestData.message) updatedData.message = requestData.message;
+    
+    console.log(`Converted data for database:`, updatedData);
+    
+    // Use Supabase to update the recipient
+    const { data, error } = await supabase
+      .from('recipients')
+      .update(updatedData)
+      .eq('id', recipientId)
+      .eq('campaign_id', id)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error updating recipient:', error);
+      return res.status(500).json({ message: 'Failed to update recipient', error: error.message });
+    }
+    
+    console.log(`Successfully updated recipient ${recipientId}`);
+    res.json(data);
+    
+  } catch (error) {
+    console.error('Update recipient error:', error);
+    res.status(500).json({ 
+      message: 'Failed to update recipient', 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+// Delete a recipient
+exports.deleteRecipient = async (req, res) => {
+  try {
+    const { id, recipientId } = req.params;
+    console.log(`Attempting to delete recipient ${recipientId} from campaign ${id}`);
+    
+    // Check if campaign exists and user is authorized
+    const campaign = await Campaign.findById(id);
+    
+    if (!campaign) {
+      console.log(`Campaign ${id} not found`);
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Authorization check
+    if (String(campaign.user_id) !== String(req.userId)) {
+      console.log(`User ${req.userId} not authorized for campaign ${id} (owned by ${campaign.user_id})`);
+      return res.status(403).json({ message: 'Not authorized to modify this campaign' });
+    }
+    
+    // Delete the recipient
+    const { error } = await supabase
+      .from('recipients')
+      .delete()
+      .eq('id', recipientId)
+      .eq('campaign_id', id);
+    
+    if (error) {
+      console.error('Error deleting recipient:', error);
+      return res.status(500).json({ message: 'Failed to delete recipient', error: error.message });
+    }
+    
+    console.log(`Successfully deleted recipient ${recipientId}`);
+    res.json({ message: 'Recipient deleted successfully' });
+    
+  } catch (error) {
+    console.error('Delete recipient error:', error);
+    res.status(500).json({ 
+      message: 'Failed to delete recipient', 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+}; 

@@ -1,6 +1,6 @@
 const express = require('express');
 const authRoutes = require('./authRoutes');
-const campaignRoutes = require('./campaignRoutes');
+const campaignRoutes = require('./campaigns');
 const whatsappRoutes = require('./whatsappRoutes');
 
 const router = express.Router();
