@@ -22,8 +22,24 @@ class WhatsAppService {
     });
   }
   
-  async initialize(userId, connectionId, connectionName) {
+  async initialize(userId, connectionId = 'default') {
     try {
+      // Find the specific connection in the database
+      const { data: connections, error } = await supabase
+        .from('whatsapp_connections')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('id', connectionId);
+      
+      if (error) throw error;
+      
+      if (!connections || connections.length === 0) {
+        console.error(`No WhatsApp connection found with ID ${connectionId} for user ${userId}`);
+        return false;
+      }
+      
+      const connection = connections[0];
+      
       // Check if this connection already exists and is authenticated
       const existingClient = this.clients.get(connectionId);
       if (existingClient && existingClient.isAuthenticated) {
@@ -32,7 +48,7 @@ class WhatsAppService {
       }
 
       // First, ensure the connection exists in the database
-      await this.ensureConnectionInDb(userId, connectionId, connectionName);
+      await this.ensureConnectionInDb(userId, connectionId, connection.name);
       
       // Update status to initializing
       await this.updateConnectionInDb(connectionId, {
@@ -67,7 +83,7 @@ class WhatsAppService {
         isAuthenticated: false,
         qrCodeData: null,
         userId: userId,
-        name: connectionName || `Connection ${connectionId.substring(0, 8)}`
+        name: connection.name || `Connection ${connectionId.substring(0, 8)}`
       };
 
       // Set up event handlers
@@ -171,15 +187,8 @@ class WhatsAppService {
 
       return { success: true, status: 'initializing' };
     } catch (error) {
-      console.error(`Initialization error for connection ${connectionId}:`, error);
-      
-      // Update the connection status in the database
-      await this.updateConnectionInDb(connectionId, {
-        status: 'error',
-        updated_at: new Date().toISOString()
-      });
-      
-      return { success: false, error: error.message };
+      console.error('Error initializing WhatsApp:', error);
+      return false;
     }
   }
   
@@ -398,8 +407,28 @@ class WhatsAppService {
     }
   }
   
-  async sendMessage(connectionId, phoneNumber, message) {
+  async sendMessage(phoneNumberOrConnectionId, messageOrPhoneNumber, optionalMessage = null) {
     try {
+      // Handle both function signatures:
+      // 1. sendMessage(phoneNumber, message) - legacy format
+      // 2. sendMessage(connectionId, phoneNumber, message) - new format
+      
+      let connectionId, phoneNumber, message;
+      
+      if (optionalMessage === null) {
+        // Legacy format: sendMessage(phoneNumber, message)
+        connectionId = 'default'; // Use default connection
+        phoneNumber = phoneNumberOrConnectionId;
+        message = messageOrPhoneNumber;
+      } else {
+        // New format: sendMessage(connectionId, phoneNumber, message)
+        connectionId = phoneNumberOrConnectionId;
+        phoneNumber = messageOrPhoneNumber;
+        message = optionalMessage;
+      }
+      
+      console.log(`Sending message to ${phoneNumber} using connection ${connectionId}`);
+      
       const clientInstance = this.clients.get(connectionId);
       
       // Check if client is initialized and authenticated
@@ -426,7 +455,7 @@ class WhatsAppService {
       console.log(`Message sent successfully from connection ${connectionId}:`, result.id._serialized);
       return { success: true, messageId: result.id._serialized };
     } catch (error) {
-      console.error(`Error sending WhatsApp message from connection ${connectionId}:`, error);
+      console.error(`Error sending WhatsApp message:`, error);
       return { success: false, error: error.message };
     }
   }

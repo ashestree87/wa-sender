@@ -2,6 +2,7 @@ const Campaign = require('../models/Campaign');
 const Recipient = require('../models/Recipient');
 const schedulerService = require('../services/scheduler/schedulerService');
 const supabase = require('../config/database');
+const whatsappService = require('../services/automation/whatsappService');
 
 // Create a new campaign
 exports.createCampaign = async (req, res) => {
@@ -293,6 +294,7 @@ exports.completeCampaign = async (req, res) => {
 exports.executeCampaign = async (req, res) => {
   try {
     const { id } = req.params;
+    const { connectionId } = req.body; // Get the connection ID from the request
     
     // Get campaign details
     const campaign = await Campaign.findById(id, req.userId);
@@ -306,16 +308,23 @@ exports.executeCampaign = async (req, res) => {
       return res.status(400).json({ message: 'No recipients found for this campaign' });
     }
     
-    // Initialize WhatsApp
-    const whatsappService = require('../services/automation/whatsappService');
-    const isInitialized = await whatsappService.initialize(req.userId);
+    // Check if WhatsApp is initialized with the selected connection
+    if (!connectionId) {
+      return res.status(400).json({ message: 'WhatsApp connection ID is required' });
+    }
+    
+    // Initialize WhatsApp with the selected connection
+    const isInitialized = await whatsappService.initialize(req.userId, connectionId);
     
     if (!isInitialized) {
       return res.status(400).json({ message: 'WhatsApp not initialized. Please scan QR code first.' });
     }
     
-    // Update campaign status
-    await Campaign.update(id, { status: 'in_progress' });
+    // Save the connection ID to the campaign
+    await Campaign.update(id, { 
+      status: 'in_progress',
+      whatsapp_connection_id: connectionId 
+    });
     
     // Start sending messages
     res.json({ 
@@ -323,8 +332,12 @@ exports.executeCampaign = async (req, res) => {
       recipientCount: recipients.length 
     });
     
-    // Process messages in background
-    processCampaign(campaign, recipients, req.userId);
+    // Process messages in background with the connection ID
+    processCampaign(
+      { ...campaign, whatsapp_connection_id: connectionId },
+      recipients, 
+      req.userId
+    );
     
   } catch (error) {
     console.error('Execute campaign error:', error);
@@ -357,7 +370,6 @@ exports.resendFailedMessages = async (req, res) => {
     }
     
     // Initialize WhatsApp
-    const whatsappService = require('../services/automation/whatsappService');
     const isInitialized = await whatsappService.initialize(req.userId);
     
     if (!isInitialized) {
@@ -388,6 +400,7 @@ exports.resendFailedMessages = async (req, res) => {
 exports.resendToRecipient = async (req, res) => {
   try {
     const { id, recipientId } = req.params;
+    const { connectionId } = req.body; // Get connection ID from request if provided
     
     // Get campaign details
     const campaign = await Campaign.findById(id);
@@ -410,9 +423,15 @@ exports.resendToRecipient = async (req, res) => {
       return res.status(400).json({ message: 'Recipient does not belong to this campaign' });
     }
     
-    // Initialize WhatsApp
-    const whatsappService = require('../services/automation/whatsappService');
-    const isInitialized = await whatsappService.initialize(req.userId);
+    // Use provided connection ID or the one from the campaign
+    const effectiveConnectionId = connectionId || campaign.whatsapp_connection_id;
+    
+    if (!effectiveConnectionId) {
+      return res.status(400).json({ message: 'No WhatsApp connection ID found for this campaign' });
+    }
+    
+    // Initialize WhatsApp with the connection ID
+    const isInitialized = await whatsappService.initialize(req.userId, effectiveConnectionId);
     
     if (!isInitialized) {
       return res.status(400).json({ message: 'WhatsApp not initialized. Please scan QR code first.' });
@@ -427,8 +446,12 @@ exports.resendToRecipient = async (req, res) => {
       recipient: recipient.name 
     });
     
-    // Process message in background
-    processSingleRecipient(campaign, recipient, req.userId);
+    // Process message in background with the connection ID
+    processSingleRecipient(
+      { ...campaign, whatsapp_connection_id: effectiveConnectionId },
+      recipient, 
+      req.userId
+    );
     
   } catch (error) {
     console.error('Resend to recipient error:', error);
@@ -533,6 +556,20 @@ exports.resetRecipientStatus = async (req, res) => {
 // Helper function to process campaign in background
 async function processCampaign(campaign, recipients, userId) {
   try {
+    // Initialize WhatsApp with the correct connection ID
+    const connectionId = campaign.whatsapp_connection_id || campaign.whatsappConnectionId;
+    
+    if (!connectionId) {
+      console.error(`No connection ID found for campaign ${campaign.id}`);
+      await Campaign.updateStatus(campaign.id, 'failed');
+      return;
+    }
+    
+    console.log(`Processing campaign ${campaign.id} with connection ID: ${connectionId}`);
+    
+    // Make sure to initialize with both userId and connectionId
+    await whatsappService.initialize(userId, connectionId);
+    
     // Update campaign status to in_progress
     await Campaign.updateStatus(campaign.id, 'in_progress');
     
@@ -565,86 +602,50 @@ async function processCampaign(campaign, recipients, userId) {
     
     // Process each recipient
     for (const recipient of recipients) {
-      // Check if campaign has been paused or deleted
-      const currentCampaign = await Campaign.findById(campaign.id);
-      if (!currentCampaign || currentCampaign.status !== 'in_progress') {
-        console.log(`Campaign ${campaign.id} is no longer in progress, stopping processing`);
-        return;
-      }
-      
-      // Check daily limit
-      if (dailyLimit > 0 && messagesSentToday >= dailyLimit) {
-        console.log(`Daily limit of ${dailyLimit} messages reached, pausing until tomorrow`);
-        await Campaign.updateStatus(campaign.id, 'paused');
-        return;
-      }
-      
-      // Check time window if set
-      if (timeWindowStart && timeWindowEnd) {
-        const now = new Date();
-        const currentTime = now.getHours() * 60 + now.getMinutes(); // Convert to minutes since midnight
-        
-        // Parse time window strings (format: "HH:MM")
-        const [startHour, startMinute] = timeWindowStart.split(':').map(Number);
-        const [endHour, endMinute] = timeWindowEnd.split(':').map(Number);
-        
-        const windowStart = startHour * 60 + startMinute;
-        const windowEnd = endHour * 60 + endMinute;
-        
-        if (currentTime < windowStart || currentTime > windowEnd) {
-          console.log(`Current time is outside sending window (${timeWindowStart}-${timeWindowEnd}), pausing`);
-          await Campaign.updateStatus(campaign.id, 'paused');
-          return;
-        }
-      }
-      
-      // Check if recipient still exists
-      const recipientExists = await Recipient.findById(recipient.id);
-      if (!recipientExists) {
-        console.log(`Recipient ${recipient.id} no longer exists, skipping`);
+      // Skip processing if recipient status is not pending
+      if (recipient.status === 'skipped' || recipient.status === 'sent' || recipient.status === 'delivered') {
+        console.log(`Skipping recipient ${recipient.name} with status ${recipient.status}`);
         continue;
       }
       
       try {
         // Update recipient status to processing
-        try {
-          await Recipient.updateStatus(recipient.id, 'processing');
-        } catch (statusError) {
-          console.error(`Error updating recipient ${recipient.id} status to processing:`, statusError);
-          // Continue anyway
-        }
+        await Recipient.updateStatus(recipient.id, 'processing');
         
-        // Generate message content
-        let messageContent;
-        if (campaign.use_ai) {
+        // Prepare message content
+        let messageContent = campaign.message_template;
+        
+        // Replace placeholders
+        messageContent = messageContent.replace(/{name}/g, recipient.name);
+        
+        // Apply AI enhancement if enabled
+        if (campaign.use_ai && campaign.ai_prompt) {
           try {
-            messageContent = await aiService.generateMessage(
-              campaign.message_template,
+            const aiService = require('../services/ai/messageGenerationService');
+            const enhancedMessage = await aiService.enhanceMessage(
+              messageContent, 
               campaign.ai_prompt,
               recipient.name
             );
+            
+            if (enhancedMessage) {
+              messageContent = enhancedMessage;
+              console.log(`Message enhanced with AI for ${recipient.name}`);
+            }
           } catch (aiError) {
-            console.error('Error generating AI message:', aiError);
-            // Fallback to template
-            messageContent = campaign.message_template.replace('{name}', recipient.name || 'there');
+            console.error('AI enhancement error:', aiError);
+            // Continue with original message if AI fails
           }
-        } else {
-          // Use template with basic name replacement
-          messageContent = campaign.message_template.replace('{name}', recipient.name || 'there');
         }
         
-        // Store the generated message
-        try {
-          await Recipient.updateStatus(recipient.id, 'processing', null, null, messageContent);
-        } catch (updateError) {
-          console.error(`Error storing message for recipient ${recipient.id}:`, updateError);
-          // Continue anyway
-        }
+        // Save the final message
+        await Recipient.updateStatus(recipient.id, 'processing', null, null, messageContent);
         
-        // Send the message
+        // Send the message - IMPORTANT: Pass the connectionId as the first parameter
         let result;
         try {
-          result = await whatsappService.sendMessage(recipient.phone_number, messageContent);
+          // Use the new format: sendMessage(connectionId, phoneNumber, message)
+          result = await whatsappService.sendMessage(connectionId, recipient.phone_number, messageContent);
         } catch (sendError) {
           console.error(`Error sending message to ${recipient.phone_number}:`, sendError);
           
@@ -882,6 +883,14 @@ async function processFailedRecipients(campaign, recipients, userId) {
 // Helper function to process a single recipient
 async function processSingleRecipient(campaign, recipient, userId) {
   try {
+    // Get the connection ID
+    const connectionId = campaign.whatsapp_connection_id || campaign.whatsappConnectionId;
+    
+    if (!connectionId) {
+      console.error(`No connection ID found for campaign ${campaign.id}`);
+      throw new Error('No WhatsApp connection ID found for this campaign');
+    }
+    
     // Check if campaign and recipient still exist
     const campaignExists = await Campaign.findById(campaign.id);
     if (!campaignExists) {
@@ -898,7 +907,7 @@ async function processSingleRecipient(campaign, recipient, userId) {
     const whatsappService = require('../services/automation/whatsappService');
     const aiService = require('../services/ai/messageGenerationService');
     
-    console.log(`Starting resend for recipient: ${recipient.name}`);
+    console.log(`Starting resend for recipient: ${recipient.name} using connection ${connectionId}`);
     
     // Prepare message
     let finalMessage = recipient.message || campaign.message_template;
@@ -931,9 +940,10 @@ async function processSingleRecipient(campaign, recipient, userId) {
       }
     }
     
-    // Send the message with error handling
+    // Send the message with error handling - IMPORTANT: Pass the connectionId
     try {
       const result = await whatsappService.sendMessage(
+        connectionId,
         recipient.phone_number, 
         finalMessage
       );
