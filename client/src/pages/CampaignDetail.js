@@ -28,6 +28,11 @@ function CampaignDetail() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredRecipients, setFilteredRecipients] = useState([]);
 
+  // Add these new functions to handle recipient editing and deletion
+  const [editRecipientModalOpen, setEditRecipientModalOpen] = useState(false);
+  const [currentRecipient, setCurrentRecipient] = useState(null);
+  const [deleteRecipientModalOpen, setDeleteRecipientModalOpen] = useState(false);
+
   // Consolidated fetch function
   const fetchCampaignDetails = useCallback(async () => {
     try {
@@ -358,6 +363,48 @@ function CampaignDetail() {
     setFilteredRecipients(filtered);
   }, [searchTerm, recipients]);
 
+  // Function to open the edit modal for a recipient
+  const openEditRecipientModal = (recipient) => {
+    setCurrentRecipient(recipient);
+    setEditRecipientModalOpen(true);
+  };
+
+  // Function to open the delete modal for a recipient
+  const openDeleteRecipientModal = (recipient) => {
+    setCurrentRecipient(recipient);
+    setDeleteRecipientModalOpen(true);
+  };
+
+  // Function to delete a recipient
+  const deleteRecipient = async (recipientId) => {
+    try {
+      await api.delete(`/campaigns/${id}/recipients/${recipientId}`);
+      addToast('Recipient deleted successfully', 'success');
+      fetchCampaignDetails(); // Refresh to show updated list
+    } catch (error) {
+      console.error('Error deleting recipient:', error);
+      addToast(`Failed to delete recipient: ${error.response?.data?.message || error.message}`, 'error');
+    } finally {
+      setDeleteRecipientModalOpen(false);
+      setCurrentRecipient(null);
+    }
+  };
+
+  // Function to update a recipient
+  const updateRecipient = async (recipientId, updatedData) => {
+    try {
+      await api.put(`/campaigns/${id}/recipients/${recipientId}`, updatedData);
+      addToast('Recipient updated successfully', 'success');
+      fetchCampaignDetails(); // Refresh to show updated data
+    } catch (error) {
+      console.error('Error updating recipient:', error);
+      addToast(`Failed to update recipient: ${error.response?.data?.message || error.message}`, 'error');
+    } finally {
+      setEditRecipientModalOpen(false);
+      setCurrentRecipient(null);
+    }
+  };
+
   if (loading) {
     return <div>Loading campaign details...</div>;
   }
@@ -612,11 +659,11 @@ function CampaignDetail() {
                         timeZoneName: 'short'
                       }) : '-'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-6 py-4 whitespace-nowrap flex space-x-2">
                       {recipient.status === 'pending' && (
                         <button
                           onClick={() => skipRecipient(recipient.id)}
-                          className="text-xs bg-gray-500 text-white px-2 py-1 rounded hover:bg-gray-600 mr-2"
+                          className="text-xs bg-gray-500 text-white px-2 py-1 rounded hover:bg-gray-600"
                         >
                           Skip
                         </button>
@@ -629,6 +676,24 @@ function CampaignDetail() {
                           Resend
                         </button>
                       )}
+                      
+                      {/* Add edit button */}
+                      <button
+                        onClick={() => openEditRecipientModal(recipient)}
+                        className="text-xs bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
+                        title="Edit recipient"
+                      >
+                        Edit
+                      </button>
+                      
+                      {/* Add delete button */}
+                      <button
+                        onClick={() => openDeleteRecipientModal(recipient)}
+                        className="text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                        title="Delete recipient"
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -654,6 +719,112 @@ function CampaignDetail() {
           itemName={campaign.name}
         />
       )}
+      
+      {/* Add recipient delete confirmation modal */}
+      {currentRecipient && (
+        <DeleteConfirmationModal
+          isOpen={deleteRecipientModalOpen}
+          onClose={() => {
+            setDeleteRecipientModalOpen(false);
+            setCurrentRecipient(null);
+          }}
+          onConfirm={() => deleteRecipient(currentRecipient.id)}
+          itemName={`recipient ${currentRecipient.name}`}
+          message="This will permanently remove this recipient from the campaign."
+        />
+      )}
+      
+      {/* Add recipient edit modal */}
+      {currentRecipient && (
+        <EditRecipientModal
+          isOpen={editRecipientModalOpen}
+          onClose={() => {
+            setEditRecipientModalOpen(false);
+            setCurrentRecipient(null);
+          }}
+          recipient={currentRecipient}
+          onSave={(updatedData) => updateRecipient(currentRecipient.id, updatedData)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Add this component at the end of the file or in a separate file
+function EditRecipientModal({ isOpen, onClose, recipient, onSave }) {
+  const [formData, setFormData] = useState({
+    name: recipient?.name || '',
+    phoneNumber: recipient?.phoneNumber || ''
+  });
+  
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+  
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+  
+  if (!isOpen) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <h2 className="text-xl font-semibold mb-4">Edit Recipient</h2>
+        
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+              Name
+            </label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          
+          <div className="mb-6">
+            <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700 mb-1">
+              Phone Number
+            </label>
+            <input
+              type="text"
+              id="phoneNumber"
+              name="phoneNumber"
+              value={formData.phoneNumber}
+              onChange={handleChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          
+          <div className="flex justify-end space-x-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+            >
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
