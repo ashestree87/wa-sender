@@ -9,6 +9,9 @@ class SchedulerService {
   constructor() {
     this.jobs = new Map();
     this.initializeScheduler();
+    
+    // Set up a daily job to check paused campaigns
+    this.setupDailyChecks();
   }
   
   async initializeScheduler() {
@@ -180,6 +183,12 @@ class SchedulerService {
   async processCampaignRecipients(campaign, recipients) {
     try {
       console.log(`Processing ${recipients.length} recipients for campaign ${campaign.id}`);
+      console.log(`Campaign timing settings:
+        - Min delay: ${campaign.min_delay_seconds || 3} seconds
+        - Max delay: ${campaign.max_delay_seconds || 5} seconds
+        - Daily limit: ${campaign.daily_limit || 'None'}
+        - Time window: ${campaign.time_window_start || 'None'} - ${campaign.time_window_end || 'None'}
+      `);
       
       // Get campaign timing settings
       const minDelay = campaign.min_delay_seconds || 3;
@@ -312,6 +321,106 @@ class SchedulerService {
       } catch (closeError) {
         console.error('Error closing WhatsApp service:', closeError);
       }
+    }
+  }
+
+  // Add this method to check paused campaigns daily
+  setupDailyChecks() {
+    // Run at midnight every day
+    const dailyJob = schedule.scheduleJob('0 0 * * *', async () => {
+      try {
+        console.log('Running daily campaign checks');
+        await this.checkPausedCampaigns();
+      } catch (error) {
+        console.error('Error in daily campaign check:', error);
+      }
+    });
+    
+    // Also run every hour to check for time window campaigns
+    const hourlyJob = schedule.scheduleJob('0 * * * *', async () => {
+      try {
+        console.log('Running hourly campaign checks');
+        await this.checkPausedCampaigns();
+      } catch (error) {
+        console.error('Error in hourly campaign check:', error);
+      }
+    });
+  }
+
+  // Add this method to check and resume paused campaigns
+  async checkPausedCampaigns() {
+    try {
+      // Get all paused campaigns
+      const { data: pausedCampaigns, error } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('status', 'paused');
+        
+      if (error) throw error;
+      
+      console.log(`Found ${pausedCampaigns.length} paused campaigns to check`);
+      
+      const now = new Date();
+      const currentTime = now.getHours() * 60 + now.getMinutes(); // Minutes since midnight
+      
+      for (const campaign of pausedCampaigns) {
+        let shouldResume = false;
+        let resumeReason = '';
+        
+        // Check if campaign was paused due to daily limit
+        if (campaign.daily_limit > 0) {
+          // Get count of messages sent today
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          const { count, error: countError } = await supabase
+            .from('recipients')
+            .select('id', { count: 'exact' })
+            .eq('campaign_id', campaign.id)
+            .eq('status', 'sent')
+            .gte('sent_at', today.toISOString());
+          
+          if (!countError && count < campaign.daily_limit) {
+            shouldResume = true;
+            resumeReason = `Daily limit reset (${count}/${campaign.daily_limit})`;
+          }
+        }
+        
+        // Check if campaign was paused due to time window
+        if (campaign.time_window_start && campaign.time_window_end) {
+          // Parse time window strings (format: "HH:MM")
+          const [startHour, startMinute] = campaign.time_window_start.split(':').map(Number);
+          const [endHour, endMinute] = campaign.time_window_end.split(':').map(Number);
+          
+          const windowStart = startHour * 60 + startMinute;
+          const windowEnd = endHour * 60 + endMinute;
+          
+          if (currentTime >= windowStart && currentTime <= windowEnd) {
+            shouldResume = true;
+            resumeReason = `Current time (${now.getHours()}:${now.getMinutes()}) is within sending window (${campaign.time_window_start}-${campaign.time_window_end})`;
+          }
+        }
+        
+        // Resume the campaign if conditions are met
+        if (shouldResume) {
+          console.log(`Resuming campaign ${campaign.id}: ${resumeReason}`);
+          await Campaign.updateStatus(campaign.id, 'in_progress');
+          
+          // Get pending recipients and process them
+          const recipients = await Recipient.findByCampaignId(campaign.id);
+          const pendingRecipients = recipients.filter(r => r.status === 'pending');
+          
+          if (pendingRecipients.length > 0) {
+            console.log(`Processing ${pendingRecipients.length} pending recipients for resumed campaign ${campaign.id}`);
+            this.processCampaignRecipients(campaign, pendingRecipients);
+          } else {
+            console.log(`No pending recipients for campaign ${campaign.id}, marking as completed`);
+            await Campaign.updateStatus(campaign.id, 'completed');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking paused campaigns:', error);
     }
   }
 }
