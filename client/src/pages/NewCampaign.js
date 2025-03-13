@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import Papa from 'papaparse';
 
 function NewCampaign() {
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -19,8 +21,10 @@ function NewCampaign() {
     timeWindowEnd: ''
   });
   const [recipientInput, setRecipientInput] = useState({ name: '', phoneNumber: '' });
+  const [bulkInput, setBulkInput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [importMethod, setImportMethod] = useState('manual');
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -57,6 +61,154 @@ function NewCampaign() {
     setFormData({ ...formData, recipients: updatedRecipients });
   };
 
+  const handleBulkInputChange = (e) => {
+    setBulkInput(e.target.value);
+  };
+
+  const processBulkInput = () => {
+    if (!bulkInput.trim()) {
+      return setError('Please enter recipient data');
+    }
+
+    try {
+      const lines = bulkInput.trim().split('\n');
+      const newRecipients = [];
+      const errors = [];
+
+      lines.forEach((line, index) => {
+        if (!line.trim()) return;
+
+        const parts = line.split(',').map(part => part.trim());
+        
+        if (parts.length < 2) {
+          errors.push(`Line ${index + 1}: Not enough data (expected name, phone number)`);
+          return;
+        }
+
+        const name = parts[0];
+        const phoneNumber = parts[1];
+
+        if (!name) {
+          errors.push(`Line ${index + 1}: Missing name`);
+          return;
+        }
+
+        if (!phoneNumber) {
+          errors.push(`Line ${index + 1}: Missing phone number`);
+          return;
+        }
+
+        newRecipients.push({ name, phoneNumber });
+      });
+
+      if (errors.length > 0) {
+        setError(`Errors in bulk input:\n${errors.join('\n')}`);
+        return;
+      }
+
+      if (newRecipients.length === 0) {
+        setError('No valid recipients found in input');
+        return;
+      }
+
+      setFormData({
+        ...formData,
+        recipients: [...formData.recipients, ...newRecipients]
+      });
+
+      setBulkInput('');
+      setError('');
+      
+      setImportMethod('manual');
+    } catch (err) {
+      setError('Error processing bulk input: ' + err.message);
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        if (results.errors.length > 0) {
+          setError(`CSV parsing errors: ${results.errors.map(e => e.message).join(', ')}`);
+          return;
+        }
+
+        const newRecipients = [];
+        const errors = [];
+
+        results.data.forEach((row, index) => {
+          const nameKey = Object.keys(row).find(key => 
+            key.toLowerCase() === 'name' || 
+            key.toLowerCase() === 'recipient' || 
+            key.toLowerCase() === 'contact'
+          );
+          
+          const phoneKey = Object.keys(row).find(key => 
+            key.toLowerCase().includes('phone') || 
+            key.toLowerCase().includes('number') || 
+            key.toLowerCase().includes('mobile')
+          );
+
+          if (!nameKey) {
+            errors.push(`Row ${index + 1}: Could not find name column`);
+            return;
+          }
+
+          if (!phoneKey) {
+            errors.push(`Row ${index + 1}: Could not find phone number column`);
+            return;
+          }
+
+          const name = row[nameKey].trim();
+          const phoneNumber = row[phoneKey].trim();
+
+          if (!name) {
+            errors.push(`Row ${index + 1}: Missing name`);
+            return;
+          }
+
+          if (!phoneNumber) {
+            errors.push(`Row ${index + 1}: Missing phone number`);
+            return;
+          }
+
+          newRecipients.push({ name, phoneNumber });
+        });
+
+        if (errors.length > 0) {
+          setError(`Errors in CSV file:\n${errors.join('\n')}`);
+          return;
+        }
+
+        if (newRecipients.length === 0) {
+          setError('No valid recipients found in CSV file');
+          return;
+        }
+
+        setFormData({
+          ...formData,
+          recipients: [...formData.recipients, ...newRecipients]
+        });
+
+        setError('');
+        
+        setImportMethod('manual');
+      },
+      error: (err) => {
+        setError('Error parsing CSV file: ' + err.message);
+      }
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -67,7 +219,6 @@ function NewCampaign() {
     try {
       setLoading(true);
       
-      // Process time windows
       let timeWindowStart = formData.timeWindowStart;
       let timeWindowEnd = formData.timeWindowEnd;
       
@@ -79,13 +230,11 @@ function NewCampaign() {
         timeWindowEnd = null;
       }
       
-      // If one is null, make both null
       if (timeWindowStart === null || timeWindowEnd === null) {
         timeWindowStart = null;
         timeWindowEnd = null;
       }
       
-      // Create campaign with the new fields
       const campaignResponse = await api.post('/campaigns', {
         name: formData.name,
         description: formData.description,
@@ -102,7 +251,6 @@ function NewCampaign() {
       
       const campaignId = campaignResponse.data.id;
       
-      // Add recipients
       await api.post(`/campaigns/${campaignId}/recipients`, {
         recipients: formData.recipients
       });
@@ -122,7 +270,7 @@ function NewCampaign() {
       
       {error && (
         <div className="mb-4 bg-red-50 p-4 rounded-md">
-          <p className="text-red-700">{error}</p>
+          <p className="text-red-700 whitespace-pre-line">{error}</p>
         </div>
       )}
       
@@ -314,42 +462,139 @@ function NewCampaign() {
         <div className="mb-6">
           <h3 className="text-lg font-semibold mb-3">Recipients</h3>
           
-          <div className="flex flex-wrap -mx-2 mb-4">
-            <div className="px-2 w-full md:w-1/2">
-              <input
-                type="text"
-                name="name"
-                value={recipientInput.name}
-                onChange={handleRecipientChange}
-                placeholder="Recipient Name"
-                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-              />
-            </div>
-            <div className="px-2 w-full md:w-1/2 mt-3 md:mt-0">
-              <div className="flex">
+          <div className="flex border-b border-gray-200 mb-4">
+            <button
+              type="button"
+              className={`py-2 px-4 font-medium ${
+                importMethod === 'manual' 
+                  ? 'border-b-2 border-blue-500 text-blue-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => setImportMethod('manual')}
+            >
+              Add Manually
+            </button>
+            <button
+              type="button"
+              className={`py-2 px-4 font-medium ${
+                importMethod === 'bulk' 
+                  ? 'border-b-2 border-blue-500 text-blue-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => setImportMethod('bulk')}
+            >
+              Bulk Text Import
+            </button>
+            <button
+              type="button"
+              className={`py-2 px-4 font-medium ${
+                importMethod === 'csv' 
+                  ? 'border-b-2 border-blue-500 text-blue-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => setImportMethod('csv')}
+            >
+              CSV Upload
+            </button>
+          </div>
+          
+          {importMethod === 'manual' && (
+            <div className="flex flex-wrap -mx-2 mb-4">
+              <div className="px-2 w-full md:w-1/2">
                 <input
                   type="text"
-                  name="phoneNumber"
-                  value={recipientInput.phoneNumber}
+                  name="name"
+                  value={recipientInput.name}
                   onChange={handleRecipientChange}
-                  placeholder="Phone Number"
+                  placeholder="Recipient Name"
                   className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
                 />
+              </div>
+              <div className="px-2 w-full md:w-1/2 mt-3 md:mt-0">
+                <div className="flex">
+                  <input
+                    type="text"
+                    name="phoneNumber"
+                    value={recipientInput.phoneNumber}
+                    onChange={handleRecipientChange}
+                    placeholder="Phone Number"
+                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                  />
+                  <button
+                    type="button"
+                    onClick={addRecipient}
+                    className="ml-2 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {importMethod === 'bulk' && (
+            <div className="mb-4">
+              <textarea
+                value={bulkInput}
+                onChange={handleBulkInputChange}
+                placeholder="Enter recipients in format: Name, Phone Number (one per line)"
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                rows="6"
+              />
+              <p className="text-sm text-gray-500 mt-1">
+                Format: Name, Phone Number (one recipient per line)
+              </p>
+              <div className="mt-2">
                 <button
                   type="button"
-                  onClick={addRecipient}
-                  className="ml-2 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                  onClick={processBulkInput}
+                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
                 >
-                  Add
+                  Import Recipients
                 </button>
               </div>
             </div>
-          </div>
+          )}
+          
+          {importMethod === 'csv' && (
+            <div className="mb-4">
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  ref={fileInputRef}
+                />
+                <p className="mb-2 text-sm text-gray-500">
+                  Upload a CSV file with columns for name and phone number
+                </p>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                >
+                  Select CSV File
+                </button>
+              </div>
+            </div>
+          )}
           
           {formData.recipients.length > 0 && (
             <div className="bg-gray-50 p-4 rounded-md">
-              <h4 className="font-medium mb-2">Added Recipients:</h4>
-              <ul className="divide-y divide-gray-200">
+              <div className="flex justify-between items-center mb-2">
+                <h4 className="font-medium">Added Recipients: {formData.recipients.length}</h4>
+                {formData.recipients.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({...formData, recipients: []})}
+                    className="text-red-600 hover:text-red-800 text-sm"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+              <ul className="divide-y divide-gray-200 max-h-60 overflow-y-auto">
                 {formData.recipients.map((recipient, index) => (
                   <li key={index} className="py-2 flex justify-between items-center">
                     <div>

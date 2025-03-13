@@ -29,6 +29,7 @@ router.post('/:id/resend-failed', campaignController.resendFailedMessages);
 // Recipient routes
 router.get('/:id/recipients', campaignController.getRecipients);
 router.post('/:id/recipients', campaignController.addRecipients);
+router.post('/:id/recipients/import', campaignController.importRecipients);
 router.put('/:id/recipients/:recipientId', campaignController.updateRecipient);
 router.delete('/:id/recipients/:recipientId', campaignController.deleteRecipient);
 router.post('/:id/recipients/:recipientId/resend', campaignController.resendToRecipient);

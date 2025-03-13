@@ -209,6 +209,37 @@ class Campaign {
       throw error;
     }
   }
+
+  static async processBulkRecipients(campaignId, recipientsData) {
+    try {
+      console.log(`Processing ${recipientsData.length} bulk recipients for campaign ${campaignId}`);
+      
+      // Prepare the data for insertion
+      const formattedRecipients = recipientsData.map(recipient => ({
+        campaign_id: campaignId,
+        name: recipient.name,
+        phone_number: recipient.phoneNumber,
+        status: 'pending'
+      }));
+      
+      // Insert all recipients in a single operation
+      const { data, error } = await supabase
+        .from('recipients')
+        .insert(formattedRecipients)
+        .select();
+      
+      if (error) {
+        console.error('Error in processBulkRecipients:', error);
+        throw error;
+      }
+      
+      console.log(`Successfully added ${data.length} recipients`);
+      return data;
+    } catch (error) {
+      console.error(`Failed to process bulk recipients for campaign ${campaignId}:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = Campaign; 

@@ -200,6 +200,45 @@ exports.addRecipients = async (req, res) => {
   }
 };
 
+// Add a new endpoint for bulk recipient import
+exports.importRecipients = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { recipients } = req.body;
+    
+    // Validate campaign ownership
+    const campaign = await Campaign.findById(id);
+    
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    if (campaign.user_id !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Validate recipients data
+    if (!Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ message: 'No valid recipients provided' });
+    }
+    
+    // Process the bulk recipients
+    const addedRecipients = await Campaign.processBulkRecipients(id, recipients);
+    
+    res.status(201).json({
+      message: `Successfully imported ${addedRecipients.length} recipients`,
+      count: addedRecipients.length,
+      recipients: addedRecipients
+    });
+  } catch (error) {
+    console.error('Error importing recipients:', error);
+    res.status(500).json({ 
+      message: 'Failed to import recipients', 
+      error: error.message 
+    });
+  }
+};
+
 // Get recipients for a campaign
 exports.getRecipients = async (req, res) => {
   try {

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
+import Papa from 'papaparse';
 
 function CampaignDetail() {
   const { id } = useParams();
@@ -32,6 +33,14 @@ function CampaignDetail() {
   const [editRecipientModalOpen, setEditRecipientModalOpen] = useState(false);
   const [currentRecipient, setCurrentRecipient] = useState(null);
   const [deleteRecipientModalOpen, setDeleteRecipientModalOpen] = useState(false);
+  
+  // Add these new state variables for bulk import
+  const [bulkImportModalOpen, setBulkImportModalOpen] = useState(false);
+  const [importMethod, setImportMethod] = useState('bulk'); // 'bulk' or 'csv'
+  const [bulkInput, setBulkInput] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState('');
+  const fileInputRef = useRef(null);
 
   // Consolidated fetch function
   const fetchCampaignDetails = useCallback(async () => {
@@ -417,6 +426,169 @@ function CampaignDetail() {
     }
   };
 
+  // Add this new function to handle bulk recipient import
+  const importRecipients = async (recipientsData) => {
+    try {
+      setImportLoading(true);
+      setImportError('');
+      
+      const response = await api.post(`/campaigns/${id}/recipients/import`, {
+        recipients: recipientsData
+      });
+      
+      addToast(`Successfully imported ${response.data.count} recipients`, 'success');
+      await fetchCampaignDetails(); // Refresh the recipient list
+      setBulkImportModalOpen(false); // Close the modal
+      setBulkInput(''); // Clear the input
+      setImportMethod('bulk'); // Reset to default
+    } catch (error) {
+      console.error('Error importing recipients:', error);
+      setImportError(error.response?.data?.message || 'Failed to import recipients');
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  // Add this function to process bulk text input
+  const processBulkInput = () => {
+    if (!bulkInput.trim()) {
+      return setImportError('Please enter recipient data');
+    }
+
+    try {
+      // Split by lines
+      const lines = bulkInput.trim().split('\n');
+      const newRecipients = [];
+      const errors = [];
+
+      lines.forEach((line, index) => {
+        // Skip empty lines
+        if (!line.trim()) return;
+
+        // Try to split by comma
+        const parts = line.split(',').map(part => part.trim());
+        
+        if (parts.length < 2) {
+          errors.push(`Line ${index + 1}: Not enough data (expected name, phone number)`);
+          return;
+        }
+
+        const name = parts[0];
+        const phoneNumber = parts[1];
+
+        // Basic validation
+        if (!name) {
+          errors.push(`Line ${index + 1}: Missing name`);
+          return;
+        }
+
+        if (!phoneNumber) {
+          errors.push(`Line ${index + 1}: Missing phone number`);
+          return;
+        }
+
+        newRecipients.push({ name, phoneNumber });
+      });
+
+      if (errors.length > 0) {
+        setImportError(`Errors in bulk input:\n${errors.join('\n')}`);
+        return;
+      }
+
+      if (newRecipients.length === 0) {
+        setImportError('No valid recipients found in input');
+        return;
+      }
+
+      // Import the recipients
+      importRecipients(newRecipients);
+    } catch (err) {
+      setImportError('Error processing bulk input: ' + err.message);
+    }
+  };
+
+  // Add this function to handle CSV file upload
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Reset the file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    // Parse the CSV file
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        if (results.errors.length > 0) {
+          setImportError(`CSV parsing errors: ${results.errors.map(e => e.message).join(', ')}`);
+          return;
+        }
+
+        const newRecipients = [];
+        const errors = [];
+
+        results.data.forEach((row, index) => {
+          // Look for name and phone number columns (case insensitive)
+          const nameKey = Object.keys(row).find(key => 
+            key.toLowerCase() === 'name' || 
+            key.toLowerCase() === 'recipient' || 
+            key.toLowerCase() === 'contact'
+          );
+          
+          const phoneKey = Object.keys(row).find(key => 
+            key.toLowerCase().includes('phone') || 
+            key.toLowerCase().includes('number') || 
+            key.toLowerCase().includes('mobile')
+          );
+
+          if (!nameKey) {
+            errors.push(`Row ${index + 1}: Could not find name column`);
+            return;
+          }
+
+          if (!phoneKey) {
+            errors.push(`Row ${index + 1}: Could not find phone number column`);
+            return;
+          }
+
+          const name = row[nameKey].trim();
+          const phoneNumber = row[phoneKey].trim();
+
+          if (!name) {
+            errors.push(`Row ${index + 1}: Missing name`);
+            return;
+          }
+
+          if (!phoneNumber) {
+            errors.push(`Row ${index + 1}: Missing phone number`);
+            return;
+          }
+
+          newRecipients.push({ name, phoneNumber });
+        });
+
+        if (errors.length > 0) {
+          setImportError(`Errors in CSV file:\n${errors.join('\n')}`);
+          return;
+        }
+
+        if (newRecipients.length === 0) {
+          setImportError('No valid recipients found in CSV file');
+          return;
+        }
+
+        // Import the recipients
+        importRecipients(newRecipients);
+      },
+      error: (err) => {
+        setImportError('Error parsing CSV file: ' + err.message);
+      }
+    });
+  };
+
   if (loading) {
     return <div>Loading campaign details...</div>;
   }
@@ -426,7 +598,7 @@ function CampaignDetail() {
   }
 
   return (
-    <div>
+    <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">{campaign.name}</h1>
         <div className="space-x-2">
@@ -595,7 +767,15 @@ function CampaignDetail() {
       </div>
 
       <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-lg font-semibold mb-4">Recipients ({recipients.length})</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">Recipients ({recipients.length})</h2>
+          <button
+            onClick={() => setBulkImportModalOpen(true)}
+            className="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600 text-sm"
+          >
+            Bulk Import
+          </button>
+        </div>
         
         {/* Full-width search with nicer design */}
         <div className="mb-4">
@@ -785,6 +965,115 @@ function CampaignDetail() {
           onSave={(updatedData) => updateRecipient(currentRecipient.id, updatedData)}
         />
       )}
+
+      {/* Bulk Import Modal */}
+      <div className={`fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 ${bulkImportModalOpen ? '' : 'hidden'}`}>
+        <div className="bg-white rounded-lg p-6 w-full max-w-2xl">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Bulk Import Recipients</h2>
+            <button
+              onClick={() => {
+                setBulkImportModalOpen(false);
+                setImportError('');
+                setBulkInput('');
+              }}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+            </button>
+          </div>
+          
+          {importError && (
+            <div className="mb-4 bg-red-50 p-4 rounded-md">
+              <p className="text-red-700 whitespace-pre-line">{importError}</p>
+            </div>
+          )}
+          
+          {/* Import method tabs */}
+          <div className="flex border-b border-gray-200 mb-4">
+            <button
+              type="button"
+              className={`py-2 px-4 font-medium ${
+                importMethod === 'bulk' 
+                  ? 'border-b-2 border-blue-500 text-blue-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => setImportMethod('bulk')}
+            >
+              Text Import
+            </button>
+            <button
+              type="button"
+              className={`py-2 px-4 font-medium ${
+                importMethod === 'csv' 
+                  ? 'border-b-2 border-blue-500 text-blue-600' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+              onClick={() => setImportMethod('csv')}
+            >
+              CSV Upload
+            </button>
+          </div>
+          
+          {/* Bulk text input */}
+          {importMethod === 'bulk' && (
+            <div className="mb-4">
+              <textarea
+                value={bulkInput}
+                onChange={(e) => setBulkInput(e.target.value)}
+                placeholder="Enter recipients in format: Name, Phone Number (one per line)"
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                rows="10"
+              />
+              <p className="text-sm text-gray-500 mt-1">
+                Format: Name, Phone Number (one recipient per line)
+              </p>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={processBulkInput}
+                  disabled={importLoading}
+                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline disabled:opacity-50"
+                >
+                  {importLoading ? 'Importing...' : 'Import Recipients'}
+                </button>
+              </div>
+            </div>
+          )}
+          
+          {/* CSV upload */}
+          {importMethod === 'csv' && (
+            <div className="mb-4">
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  ref={fileInputRef}
+                />
+                <p className="mb-2 text-sm text-gray-500">
+                  Upload a CSV file with columns for name and phone number
+                </p>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                >
+                  Select CSV File
+                </button>
+              </div>
+              {importLoading && (
+                <div className="mt-4 text-center">
+                  <p className="text-blue-600">Processing file...</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
