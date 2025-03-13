@@ -1,18 +1,19 @@
 const express = require('express');
-const router = express.Router();
 const whatsappController = require('../controllers/whatsappController');
 const auth = require('../middleware/auth');
 
-// Apply auth middleware to all routes
-router.use(auth);
+const router = express.Router();
 
 // Define routes
-router.post('/initialize', whatsappController.initializeSession);
-router.get('/status', whatsappController.getStatus);
-router.post('/logout', whatsappController.logout);
-router.post('/send-test', whatsappController.sendTestMessage);
-router.post('/connections', whatsappController.createConnection);
-router.delete('/connections/:connectionId', whatsappController.deleteConnection);
-router.get('/debug/:connectionId', whatsappController.debugClientState);
+router.post('/initialize', auth, whatsappController.initializeSession);
+router.get('/status', auth, whatsappController.getStatus);
+router.post('/logout', auth, whatsappController.logout);
+router.post('/send-test', auth, whatsappController.sendTestMessage);
+router.post('/connections', auth, whatsappController.createConnection);
+router.delete('/connections/:connectionId', auth, whatsappController.deleteConnection);
+router.get('/connections/:connectionId/debug', auth, whatsappController.debugClientState);
+
+// Add the new reset route
+router.post('/connections/:connectionId/reset', auth, whatsappController.resetConnectionStatus);
 
 module.exports = router; 

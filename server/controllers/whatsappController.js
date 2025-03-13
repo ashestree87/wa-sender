@@ -298,4 +298,57 @@ exports.debugClientState = async (req, res) => {
       success: false
     });
   }
+};
+
+exports.resetConnectionStatus = async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const { status } = req.body;
+    
+    if (!connectionId) {
+      return res.status(400).json({ 
+        message: 'Connection ID is required', 
+        success: false 
+      });
+    }
+    
+    // Validate the requested status
+    const validStatuses = ['not_initialized', 'error', 'disconnected'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
+        success: false
+      });
+    }
+    
+    console.log(`Resetting WhatsApp connection ${connectionId} to status: ${status}`);
+    
+    // First, try to close the connection if it exists in memory
+    const whatsappService = require('../services/automation/whatsappService');
+    await whatsappService.close(connectionId);
+    
+    // Then update the status in the database
+    const { data, error } = await supabase
+      .from('whatsapp_connections')
+      .update({
+        status: status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', connectionId);
+    
+    if (error) throw error;
+    
+    res.json({
+      message: `Connection status reset to ${status} successfully`,
+      success: true
+    });
+    
+  } catch (error) {
+    console.error('Reset connection status error:', error);
+    res.status(500).json({
+      message: 'Failed to reset connection status',
+      error: error.message,
+      success: false
+    });
+  }
 }; 

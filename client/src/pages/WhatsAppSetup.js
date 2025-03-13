@@ -162,6 +162,27 @@ function WhatsAppSetup() {
     }
   };
 
+  // Add a new function to handle force resetting a connection
+  const handleForceReset = async (connectionId) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      // Call the backend to force reset the connection status
+      await api.post(`/whatsapp/connections/${connectionId}/reset`, {
+        status: 'not_initialized'
+      });
+      
+      // Refresh connections after reset
+      setTimeout(fetchConnections, 500);
+    } catch (err) {
+      console.error('Error resetting WhatsApp connection:', err);
+      setError('Failed to reset connection: ' + (err.response?.data?.message || err.message));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Helper function to get status display text
   const getStatusDisplay = (status, needsReconnect) => {
     if (status === 'authenticated' && needsReconnect) {
@@ -336,6 +357,17 @@ function WhatsAppSetup() {
                     >
                       Refresh
                     </button>
+                    
+                    {/* Add Force Reset button for initializing state */}
+                    {connection.status === 'initializing' && (
+                      <button
+                        onClick={() => handleForceReset(connection.id)}
+                        disabled={isLoading}
+                        className="bg-orange-500 text-white px-3 py-1 rounded hover:bg-orange-600 disabled:opacity-50 text-sm"
+                      >
+                        Force Reset
+                      </button>
+                    )}
                     
                     {/* Only show Connect button when not in awaiting_qr state */}
                     {connection.status !== 'authenticated' && connection.status !== 'awaiting_qr' && connection.status !== 'initializing' && (
