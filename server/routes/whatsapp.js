@@ -13,7 +13,7 @@ router.post('/connections', auth, whatsappController.createConnection);
 router.delete('/connections/:connectionId', auth, whatsappController.deleteConnection);
 router.get('/connections/:connectionId/debug', auth, whatsappController.debugClientState);
 
-// Add the new reset route
+// Reset connection status route
 router.post('/connections/:connectionId/reset', auth, whatsappController.resetConnectionStatus);
 
 module.exports = router; 
