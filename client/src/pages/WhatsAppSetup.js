@@ -32,6 +32,9 @@ function WhatsAppSetup() {
           phoneNumber: conn.phoneNumber || conn.phone_number || 'Unknown'
         }));
         
+        // Sort connections by name to maintain consistent order
+        connections.sort((a, b) => a.name.localeCompare(b.name));
+        
         setConnections(connections);
         console.log('Fetched connections:', connections);
       } else {
