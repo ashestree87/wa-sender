@@ -405,6 +405,18 @@ function CampaignDetail() {
     }
   };
 
+  // Add this function to reset a recipient's status
+  const resetRecipientStatus = async (recipientId) => {
+    try {
+      await api.post(`/campaigns/${id}/recipients/${recipientId}/reset`);
+      addToast('Recipient status reset successfully', 'success');
+      fetchCampaignDetails(); // Refresh to show updated status
+    } catch (error) {
+      console.error('Error resetting recipient status:', error);
+      addToast(`Failed to reset recipient status: ${error.response?.data?.message || error.message}`, 'error');
+    }
+  };
+
   if (loading) {
     return <div>Loading campaign details...</div>;
   }
@@ -674,6 +686,14 @@ function CampaignDetail() {
                           className="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600"
                         >
                           Resend
+                        </button>
+                      )}
+                      {recipient.status === 'skipped' && (
+                        <button
+                          onClick={() => resetRecipientStatus(recipient.id)}
+                          className="text-blue-500 hover:text-blue-700"
+                        >
+                          Reset to Pending
                         </button>
                       )}
                       

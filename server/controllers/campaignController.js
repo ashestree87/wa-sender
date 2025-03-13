@@ -402,6 +402,53 @@ exports.skipRecipient = async (req, res) => {
   }
 };
 
+// Reset a recipient's status back to pending
+exports.resetRecipientStatus = async (req, res) => {
+  try {
+    const { id, recipientId } = req.params;
+    console.log(`Attempting to reset recipient ${recipientId} status for campaign ${id}`);
+    
+    // Check if campaign exists and user is authorized
+    const campaign = await Campaign.findById(id);
+    
+    if (!campaign) {
+      console.log(`Campaign ${id} not found`);
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    if (String(campaign.user_id) !== String(req.userId)) {
+      console.log(`User ${req.userId} not authorized for campaign ${id} (owned by ${campaign.user_id})`);
+      return res.status(403).json({ message: 'Not authorized to modify this campaign' });
+    }
+    
+    // Find the recipient
+    console.log(`Finding recipient ${recipientId}`);
+    const recipient = await Campaign.getRecipient(id, recipientId);
+    
+    if (!recipient) {
+      console.log(`Recipient ${recipientId} not found`);
+      return res.status(404).json({ message: 'Recipient not found' });
+    }
+    
+    console.log(`Recipient found with status: ${recipient.status}`);
+    
+    // Update recipient status to pending
+    console.log(`Updating recipient ${recipientId} status to pending`);
+    await Campaign.updateRecipientStatus(id, recipientId, 'pending');
+    
+    console.log(`Successfully reset recipient ${recipientId} status`);
+    res.json({ message: 'Recipient status reset to pending successfully' });
+    
+  } catch (error) {
+    console.error('Reset recipient status error:', error);
+    res.status(500).json({ 
+      message: 'Failed to reset recipient status', 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
 // Helper function to process campaign in background
 async function processCampaign(campaign, recipients, userId) {
   try {

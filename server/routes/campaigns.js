@@ -33,5 +33,6 @@ router.put('/:id/recipients/:recipientId', campaignController.updateRecipient);
 router.delete('/:id/recipients/:recipientId', campaignController.deleteRecipient);
 router.post('/:id/recipients/:recipientId/resend', campaignController.resendToRecipient);
 router.post('/:id/recipients/:recipientId/skip', campaignController.skipRecipient);
+router.post('/:id/recipients/:recipientId/reset', campaignController.resetRecipientStatus);
 
 module.exports = router; 
