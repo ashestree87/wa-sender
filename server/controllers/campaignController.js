@@ -1012,6 +1012,12 @@ exports.duplicateCampaign = async (req, res) => {
       messageTemplate: originalCampaign.message_template,
       useAI: originalCampaign.use_ai,
       aiPrompt: originalCampaign.ai_prompt,
+      // Add sending controls from the original campaign
+      minDelaySeconds: originalCampaign.min_delay_seconds,
+      maxDelaySeconds: originalCampaign.max_delay_seconds,
+      dailyLimit: originalCampaign.daily_limit,
+      timeWindowStart: originalCampaign.time_window_start,
+      timeWindowEnd: originalCampaign.time_window_end,
       status: 'draft' // Always start as draft
     };
     
