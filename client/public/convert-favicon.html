@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Convert SVG to ICO</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .instructions {
+      background-color: #f5f5f5;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+    }
+    canvas {
+      border: 1px solid #ddd;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Convert SVG to ICO</h1>
+  
+  <div class="instructions">
+    <p>This page helps you convert the SVG favicon to ICO format:</p>
+    <ol>
+      <li>The SVG is rendered below at different sizes</li>
+      <li>Right-click on each canvas and select "Save image as..."</li>
+      <li>Save them as PNG files</li>
+      <li>Use an online converter like <a href="https://convertio.co/png-ico/" target="_blank">Convertio</a> to convert the PNG to ICO</li>
+      <li>Replace the existing favicon.ico in the public folder</li>
+    </ol>
+  </div>
+  
+  <h2>16x16 (for favicon.ico)</h2>
+  <canvas id="canvas16" width="16" height="16"></canvas>
+  
+  <h2>32x32 (for favicon.ico)</h2>
+  <canvas id="canvas32" width="32" height="32"></canvas>
+  
+  <h2>48x48 (for favicon.ico)</h2>
+  <canvas id="canvas48" width="48" height="48"></canvas>
+  
+  <script>
+    function renderSVG(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+      
+      const img = new Image();
+      img.onload = function() {
+        ctx.drawImage(img, 0, 0, size, size);
+      };
+      img.src = 'favicon.svg';
+    }
+    
+    // Render at different sizes
+    renderSVG('canvas16', 16);
+    renderSVG('canvas32', 32);
+    renderSVG('canvas48', 48);
+  </script>
+</body>
+</html> 
