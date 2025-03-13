@@ -28,10 +28,12 @@ function WhatsAppSetup() {
           ...conn,
           qrCode: conn.qr_code || conn.qrCode, // Handle both formats
           needsReconnect: conn.needsReconnect || false,
+          // Ensure we get the phone number from all possible sources
           phoneNumber: conn.phoneNumber || conn.phone_number || 'Unknown'
         }));
         
         setConnections(connections);
+        console.log('Fetched connections:', connections);
       } else {
         // Fallback to creating a single connection from status
         const connection = {
@@ -102,7 +104,6 @@ function WhatsAppSetup() {
     }
   };
 
-  // Update the handleAddConnection function to match the backend API requirements
   const handleAddConnection = async (e) => {
     e.preventDefault();
     try {
@@ -117,8 +118,21 @@ function WhatsAppSetup() {
       setShowAddForm(false);
       setNewConnectionName('');
       
+      // Get the new connection ID from the response
+      const newConnectionId = response.data.connectionId;
+      
+      // Immediately initialize the new connection to get QR code
+      if (newConnectionId) {
+        console.log(`Auto-initializing new connection: ${newConnectionId}`);
+        try {
+          await api.post('/whatsapp/initialize', { connectionId: newConnectionId });
+        } catch (initErr) {
+          console.error('Error auto-initializing new connection:', initErr);
+        }
+      }
+      
       // Refresh connections after adding
-      setTimeout(fetchConnections, 1000);
+      setTimeout(fetchConnections, 500);
     } catch (err) {
       console.error('Error adding WhatsApp connection:', err);
       setError('Failed to add connection: ' + (err.response?.data?.message || err.message));
@@ -127,7 +141,6 @@ function WhatsAppSetup() {
     }
   };
 
-  // Fix the handleDeleteConnection function to use the correct endpoint
   const handleDeleteConnection = async (connectionId) => {
     if (!window.confirm('Are you sure you want to delete this connection?')) {
       return;
@@ -189,6 +202,44 @@ function WhatsAppSetup() {
     }
   };
 
+  // Add a new function to handle connection status display with more detail
+  const getConnectionStatusDetails = (connection) => {
+    const { status, needsReconnect } = connection;
+    
+    // Default values
+    let statusText = getStatusDisplay(status, needsReconnect);
+    let statusColor = getStatusColor(status, needsReconnect);
+    let statusIcon = null;
+    let statusDescription = '';
+    
+    // Customize based on status
+    switch (status) {
+      case 'authenticated':
+        statusIcon = '✅';
+        statusDescription = needsReconnect 
+          ? 'Your session needs to be refreshed. Click "Reconnect" to continue using WhatsApp.'
+          : 'Your WhatsApp is connected and ready to send messages.';
+        break;
+      case 'awaiting_qr':
+        statusIcon = '📱';
+        statusDescription = 'Scan the QR code below with your WhatsApp mobile app to connect.';
+        break;
+      case 'initializing':
+        statusIcon = '⏳';
+        statusDescription = 'Setting up your WhatsApp connection. This may take a moment...';
+        break;
+      case 'not_initialized':
+        statusIcon = '🔌';
+        statusDescription = 'Click "Connect" to set up this WhatsApp connection.';
+        break;
+      default:
+        statusIcon = '❓';
+        statusDescription = `Status: ${status}`;
+    }
+    
+    return { statusText, statusColor, statusIcon, statusDescription };
+  };
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="flex justify-between items-center mb-6">
@@ -196,8 +247,9 @@ function WhatsAppSetup() {
         <button
           onClick={() => setShowAddForm(true)}
           className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+          disabled={isLoading}
         >
-          Add Connection
+          {isLoading ? 'Processing...' : 'Add Connection'}
         </button>
       </div>
       
@@ -210,6 +262,9 @@ function WhatsAppSetup() {
       {showAddForm && (
         <div className="bg-white shadow rounded-lg p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4">Add New WhatsApp Connection</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Enter a name for your WhatsApp connection. After adding, you'll be prompted to scan a QR code with your phone.
+          </p>
           <form onSubmit={handleAddConnection}>
             <div className="mb-4">
               <label htmlFor="connectionName" className="block text-sm font-medium text-gray-700 mb-1">
@@ -245,106 +300,151 @@ function WhatsAppSetup() {
         </div>
       )}
 
+      {isLoading && !showAddForm && (
+        <div className="bg-blue-50 p-4 rounded-lg mb-6 flex items-center">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-700 mr-3"></div>
+          <p className="text-blue-700">Processing your request...</p>
+        </div>
+      )}
+
       {connections.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-6 text-center">
           <p className="text-gray-500">No WhatsApp connections found. Please refresh or add a connection.</p>
         </div>
       ) : (
         <div className="space-y-6">
-          {connections.map(connection => (
-            <div key={connection.id} className="bg-white shadow rounded-lg p-6">
-              <div className="flex justify-between items-center mb-4">
-                <div>
-                  <h2 className="text-lg font-semibold">{connection.name}</h2>
-                  <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm ${getStatusColor(connection.status, connection.needsReconnect)}`}>
-                    {getStatusDisplay(connection.status, connection.needsReconnect)}
+          {connections.map(connection => {
+            const { statusText, statusColor, statusIcon, statusDescription } = getConnectionStatusDetails(connection);
+            
+            return (
+              <div key={connection.id} className="bg-white shadow rounded-lg p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <div>
+                    <h2 className="text-lg font-semibold">{connection.name}</h2>
+                    <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm ${statusColor}`}>
+                      {statusIcon && <span className="mr-1">{statusIcon}</span>}
+                      {statusText}
+                    </div>
+                    <p className="text-sm text-gray-600 mt-1">{statusDescription}</p>
                   </div>
-                </div>
-                <div className="space-x-2">
-                  <button
-                    onClick={() => fetchConnections()}
-                    disabled={isLoading}
-                    className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600 disabled:opacity-50 text-sm"
-                  >
-                    Refresh
-                  </button>
                   
-                  {/* Only show Connect button when not in awaiting_qr state */}
-                  {connection.status !== 'authenticated' && connection.status !== 'awaiting_qr' && (
+                  <div className="space-x-2 flex flex-wrap gap-2">
                     <button
-                      onClick={() => handleInitialize(connection.id)}
+                      onClick={() => fetchConnections()}
                       disabled={isLoading}
-                      className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 disabled:opacity-50 text-sm"
+                      className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600 disabled:opacity-50 text-sm"
                     >
-                      Connect
+                      Refresh
                     </button>
-                  )}
-                  
-                  {/* Show Reconnect button when authenticated but needs reconnect */}
-                  {connection.status === 'authenticated' && connection.needsReconnect && (
+                    
+                    {/* Only show Connect button when not in awaiting_qr state */}
+                    {connection.status !== 'authenticated' && connection.status !== 'awaiting_qr' && connection.status !== 'initializing' && (
+                      <button
+                        onClick={() => handleInitialize(connection.id)}
+                        disabled={isLoading}
+                        className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 disabled:opacity-50 text-sm"
+                      >
+                        Connect
+                      </button>
+                    )}
+                    
+                    {/* Show initializing state */}
+                    {connection.status === 'initializing' && (
+                      <button
+                        disabled={true}
+                        className="bg-blue-500 text-white px-3 py-1 rounded disabled:opacity-70 text-sm flex items-center"
+                      >
+                        <span className="animate-spin h-4 w-4 mr-1 border-2 border-white border-t-transparent rounded-full"></span>
+                        Connecting...
+                      </button>
+                    )}
+                    
+                    {/* Show Reconnect button when authenticated but needs reconnect */}
+                    {connection.status === 'authenticated' && connection.needsReconnect && (
+                      <button
+                        onClick={() => handleInitialize(connection.id)}
+                        disabled={isLoading}
+                        className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600 disabled:opacity-50 text-sm"
+                      >
+                        Reconnect
+                      </button>
+                    )}
+                    
+                    {connection.status === 'authenticated' && !connection.needsReconnect && (
+                      <button
+                        onClick={() => handleLogout(connection.id)}
+                        disabled={isLoading}
+                        className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:opacity-50 text-sm"
+                      >
+                        Disconnect
+                      </button>
+                    )}
+                    
                     <button
-                      onClick={() => handleInitialize(connection.id)}
-                      disabled={isLoading}
-                      className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600 disabled:opacity-50 text-sm"
-                    >
-                      Reconnect
-                    </button>
-                  )}
-                  
-                  {connection.status === 'authenticated' && !connection.needsReconnect && (
-                    <button
-                      onClick={() => handleLogout(connection.id)}
+                      onClick={() => handleDeleteConnection(connection.id)}
                       disabled={isLoading}
                       className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:opacity-50 text-sm"
                     >
-                      Disconnect
+                      Delete
                     </button>
-                  )}
-                  
-                  <button
-                    onClick={() => handleDeleteConnection(connection.id)}
-                    disabled={isLoading}
-                    className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 disabled:opacity-50 text-sm"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-
-              {(connection.qrCode || connection.qr_code) && connection.status === 'awaiting_qr' && (
-                <div className="mt-4">
-                  <h3 className="text-md font-semibold mb-2">Scan this QR code with WhatsApp</h3>
-                  
-                  <div className="bg-white p-4 inline-block border rounded">
-                    <img 
-                      src={connection.qrCode || connection.qr_code} 
-                      alt="WhatsApp QR Code" 
-                      className="max-w-xs" 
-                    />
                   </div>
-                  
-                  <p className="mt-2 text-sm text-gray-600">
-                    Open WhatsApp on your phone &gt; Settings &gt; Linked Devices &gt; Link a Device
-                  </p>
                 </div>
-              )}
 
-              {connection.status === 'authenticated' && (
-                <div className="mt-4">
-                  <div className={`p-3 ${connection.needsReconnect ? 'bg-yellow-50' : 'bg-green-50'} rounded`}>
-                    <p className={connection.needsReconnect ? 'text-yellow-700' : 'text-green-700'}>
-                      <span className="font-semibold">Connected as:</span> {connection.phoneNumber || 'Unknown'}
-                    </p>
-                    {connection.needsReconnect && (
-                      <p className="text-sm text-yellow-600 mt-1">
-                        Session needs to be reconnected. Click the "Reconnect" button above.
+                {/* Show a loading indicator when initializing */}
+                {connection.status === 'initializing' && (
+                  <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                    <div className="flex items-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-700 mr-3"></div>
+                      <div>
+                        <p className="font-medium text-blue-700">Initializing WhatsApp...</p>
+                        <p className="text-sm text-blue-600">This may take a few moments. Please wait.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* QR code section with improved styling */}
+                {(connection.qrCode || connection.qr_code) && connection.status === 'awaiting_qr' && (
+                  <div className="mt-4 p-6 bg-yellow-50 rounded-lg border border-yellow-200">
+                    <h3 className="text-md font-semibold mb-3 text-yellow-800">Scan this QR code with WhatsApp</h3>
+                    
+                    <div className="bg-white p-4 inline-block border rounded shadow-sm">
+                      <img 
+                        src={connection.qrCode || connection.qr_code} 
+                        alt="WhatsApp QR Code" 
+                        className="max-w-xs" 
+                      />
+                    </div>
+                    
+                    <div className="mt-3 text-sm text-yellow-700 bg-yellow-100 p-3 rounded">
+                      <p className="font-medium">How to scan:</p>
+                      <ol className="list-decimal ml-5 mt-1 space-y-1">
+                        <li>Open WhatsApp on your phone</li>
+                        <li>Tap Settings (or ⋮) {'>'} Linked Devices</li>
+                        <li>Tap "Link a Device"</li>
+                        <li>Point your phone camera at this QR code</li>
+                      </ol>
+                    </div>
+                  </div>
+                )}
+
+                {connection.status === 'authenticated' && (
+                  <div className="mt-4">
+                    <div className={`p-3 ${connection.needsReconnect ? 'bg-yellow-50' : 'bg-green-50'} rounded`}>
+                      <p className={connection.needsReconnect ? 'text-yellow-700' : 'text-green-700'}>
+                        <span className="font-semibold">Connected as:</span> {connection.phoneNumber || 'Unknown'}
                       </p>
-                    )}
+                      {connection.needsReconnect && (
+                        <p className="text-sm text-yellow-600 mt-1">
+                          Session needs to be reconnected. Click the "Reconnect" button above.
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

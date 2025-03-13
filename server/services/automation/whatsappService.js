@@ -31,6 +31,15 @@ class WhatsAppService {
         return { success: true, status: 'authenticated' };
       }
 
+      // First, ensure the connection exists in the database
+      await this.ensureConnectionInDb(userId, connectionId, connectionName);
+      
+      // Update status to initializing
+      await this.updateConnectionInDb(connectionId, {
+        status: 'initializing',
+        updated_at: new Date().toISOString()
+      });
+
       // Create a new client instance for this connection
       console.log(`Creating new WhatsApp client for connection ${connectionId}...`);
       
@@ -150,15 +159,6 @@ class WhatsAppService {
 
       // Initialize the client
       console.log(`Initializing WhatsApp client for connection ${connectionId}...`);
-      
-      // First, ensure the connection exists in the database
-      await this.ensureConnectionInDb(userId, connectionId, connectionName);
-      
-      // Update status to initializing
-      await this.updateConnectionInDb(connectionId, {
-        status: 'initializing',
-        updated_at: new Date().toISOString()
-      });
       
       // Initialize the client
       clientInstance.client.initialize().catch(async (error) => {
