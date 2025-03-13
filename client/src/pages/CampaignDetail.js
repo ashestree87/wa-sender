@@ -23,6 +23,10 @@ function CampaignDetail() {
 
   // Add a state for WhatsApp initialization
   const [initializingWhatsapp, setInitializingWhatsapp] = useState(false);
+  
+  // Simplify search functionality - remove searchCategory
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filteredRecipients, setFilteredRecipients] = useState([]);
 
   // Consolidated fetch function
   const fetchCampaignDetails = useCallback(async () => {
@@ -332,6 +336,28 @@ function CampaignDetail() {
     };
   }, [recipients]);
 
+  // Simplified filter function that always searches all fields
+  useEffect(() => {
+    if (!recipients.length) {
+      setFilteredRecipients([]);
+      return;
+    }
+    
+    if (!searchTerm.trim()) {
+      setFilteredRecipients(recipients);
+      return;
+    }
+    
+    const lowerCaseSearch = searchTerm.toLowerCase();
+    const filtered = recipients.filter(recipient => 
+      recipient.name?.toLowerCase().includes(lowerCaseSearch) || 
+      recipient.phoneNumber?.toLowerCase().includes(lowerCaseSearch) ||
+      recipient.status?.toLowerCase().includes(lowerCaseSearch)
+    );
+    
+    setFilteredRecipients(filtered);
+  }, [searchTerm, recipients]);
+
   if (loading) {
     return <div>Loading campaign details...</div>;
   }
@@ -493,8 +519,47 @@ function CampaignDetail() {
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-lg font-semibold mb-4">Recipients ({recipients.length})</h2>
         
+        {/* Full-width search with nicer design */}
+        <div className="mb-4">
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <svg className="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <input
+              type="text"
+              placeholder="Search recipients by name, phone number, or status..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="block w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700"
+                aria-label="Clear search"
+              >
+                <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+        
         {recipients.length === 0 ? (
           <p>No recipients added to this campaign.</p>
+        ) : filteredRecipients.length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-gray-500">No recipients match your search criteria.</p>
+            <button 
+              onClick={() => setSearchTerm('')}
+              className="mt-2 text-blue-500 hover:text-blue-700"
+            >
+              Clear search
+            </button>
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -509,7 +574,7 @@ function CampaignDetail() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {recipients.map((recipient, index) => (
+                {filteredRecipients.map((recipient, index) => (
                   <tr key={recipient.id || index}>
                     <td className="px-6 py-4 whitespace-nowrap">{recipient.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap">{recipient.phoneNumber}</td>
@@ -569,6 +634,13 @@ function CampaignDetail() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        
+        {/* Search results summary */}
+        {recipients.length > 0 && searchTerm && (
+          <div className="mt-4 text-sm text-gray-500">
+            Showing {filteredRecipients.length} of {recipients.length} recipients
           </div>
         )}
       </div>
