@@ -345,11 +345,18 @@ exports.executeCampaign = async (req, res) => {
       }
     }
     
-    // Save the connection ID to the campaign and set initial status
-    await Campaign.update(id, { 
-      status: initialStatus,
-      whatsapp_connection_id: connectionId 
-    });
+    // Update only the status and connection ID while preserving all other fields
+    const { error: updateError } = await supabase
+      .from('campaigns')
+      .update({
+        status: initialStatus,
+        whatsapp_connection_ids: [connectionId]
+      })
+      .eq('id', id);
+    
+    if (updateError) {
+      throw updateError;
+    }
     
     // Start sending messages
     res.json({ 
@@ -358,9 +365,20 @@ exports.executeCampaign = async (req, res) => {
       status: initialStatus
     });
     
-    // Process messages in background with the connection ID
+    // Process messages in background with the connection ID and all campaign settings
+    const campaignWithSettings = {
+      ...campaign,
+      whatsapp_connection_ids: [connectionId],
+      time_window_start: campaign.time_window_start,
+      time_window_end: campaign.time_window_end,
+      min_delay_seconds: campaign.min_delay_seconds,
+      max_delay_seconds: campaign.max_delay_seconds,
+      daily_limit: campaign.daily_limit,
+      status: initialStatus
+    };
+    
     processCampaign(
-      { ...campaign, whatsapp_connection_id: connectionId },
+      campaignWithSettings,
       recipients, 
       req.userId
     ).catch(error => {
@@ -458,7 +476,7 @@ exports.resendToRecipient = async (req, res) => {
     }
     
     // Use provided connection ID or the one from the campaign
-    const effectiveConnectionId = connectionId || campaign.whatsapp_connection_id;
+    const effectiveConnectionId = connectionId || campaign.whatsapp_connection_ids[0];
     
     if (!effectiveConnectionId) {
       return res.status(400).json({ message: 'No WhatsApp connection ID found for this campaign' });
@@ -482,7 +500,7 @@ exports.resendToRecipient = async (req, res) => {
     
     // Process message in background with the connection ID
     processSingleRecipient(
-      { ...campaign, whatsapp_connection_id: effectiveConnectionId },
+      { ...campaign, whatsapp_connection_ids: [effectiveConnectionId] },
       recipient, 
       req.userId
     );
@@ -613,12 +631,8 @@ async function waitUntilTimeWindow(timeWindowStart, timeWindowEnd) {
 // Update the processCampaign function
 async function processCampaign(campaign, recipients, userId) {
   try {
-    // Initialize WhatsApp with the correct connection ID
-    const connectionId = campaign.whatsapp_connection_id || campaign.whatsappConnectionId;
-    const timeWindowStart = campaign.time_window_start;
-    const timeWindowEnd = campaign.time_window_end;
-    const dailyLimit = campaign.daily_limit || 0;
-    let messagesSentToday = 0;
+    // Get the first connection ID from the array
+    const connectionId = campaign.whatsapp_connection_ids?.[0];
     
     if (!connectionId) {
       console.error(`No connection ID found for campaign ${campaign.id}`);
@@ -627,6 +641,11 @@ async function processCampaign(campaign, recipients, userId) {
     }
     
     console.log(`Processing campaign ${campaign.id} with connection ${connectionId}`);
+    
+    const timeWindowStart = campaign.time_window_start;
+    const timeWindowEnd = campaign.time_window_end;
+    const dailyLimit = campaign.daily_limit || 0;
+    let messagesSentToday = 0;
     
     // Process each recipient
     for (const recipient of recipients) {
@@ -889,7 +908,7 @@ async function processFailedRecipients(campaign, recipients, userId) {
 async function processSingleRecipient(campaign, recipient, userId) {
   try {
     // Get the connection ID
-    const connectionId = campaign.whatsapp_connection_id || campaign.whatsappConnectionId;
+    const connectionId = campaign.whatsapp_connection_ids[0];
     
     if (!connectionId) {
       console.error(`No connection ID found for campaign ${campaign.id}`);
