@@ -11,7 +11,12 @@ function EditCampaign() {
     messageTemplate: '',
     useAI: false,
     aiPrompt: '',
-    scheduledStartTime: ''
+    scheduledStartTime: '',
+    minDelaySeconds: 3,
+    maxDelaySeconds: 5,
+    dailyLimit: 0,
+    timeWindowStart: '',
+    timeWindowEnd: ''
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -55,6 +60,11 @@ function EditCampaign() {
         useAI: campaignData.useAI || campaignData.use_ai || false,
         aiPrompt: campaignData.aiPrompt || campaignData.ai_prompt || '',
         scheduledStartTime: campaignData.scheduledStartTime || '',
+        minDelaySeconds: campaignData.minDelaySeconds || campaignData.min_delay_seconds || 3,
+        maxDelaySeconds: campaignData.maxDelaySeconds || campaignData.max_delay_seconds || 5,
+        dailyLimit: campaignData.dailyLimit || campaignData.daily_limit || 0,
+        timeWindowStart: campaignData.timeWindowStart || campaignData.time_window_start || '',
+        timeWindowEnd: campaignData.timeWindowEnd || campaignData.time_window_end || '',
         id: campaignData.id,
         createdAt: campaignData.createdAt || campaignData.created_at,
         status: campaignData.status
@@ -89,7 +99,7 @@ function EditCampaign() {
       const campaignToSubmit = { ...campaign };
       
       // If there's a scheduled start time, ensure it's in the correct format and future
-      if (campaignToSubmit.scheduledStartTime) {
+      if (campaignToSubmit.scheduledStartTime && campaignToSubmit.scheduledStartTime.trim() !== '') {
         const scheduledDate = new Date(campaignToSubmit.scheduledStartTime);
         const now = new Date();
         
@@ -99,6 +109,28 @@ function EditCampaign() {
         
         // The input value is in local time, but we need to send it as UTC
         campaignToSubmit.scheduledStartTime = scheduledDate.toISOString();
+      } else {
+        campaignToSubmit.scheduledStartTime = null;
+      }
+      
+      // Convert numeric fields to numbers
+      campaignToSubmit.minDelaySeconds = parseInt(campaignToSubmit.minDelaySeconds) || 3;
+      campaignToSubmit.maxDelaySeconds = parseInt(campaignToSubmit.maxDelaySeconds) || 5;
+      campaignToSubmit.dailyLimit = parseInt(campaignToSubmit.dailyLimit) || 0;
+      
+      // Ensure time windows are both set or both null
+      if (!campaignToSubmit.timeWindowStart || campaignToSubmit.timeWindowStart.trim() === '') {
+        campaignToSubmit.timeWindowStart = null;
+      }
+      
+      if (!campaignToSubmit.timeWindowEnd || campaignToSubmit.timeWindowEnd.trim() === '') {
+        campaignToSubmit.timeWindowEnd = null;
+      }
+      
+      // If one is null, make both null
+      if (campaignToSubmit.timeWindowStart === null || campaignToSubmit.timeWindowEnd === null) {
+        campaignToSubmit.timeWindowStart = null;
+        campaignToSubmit.timeWindowEnd = null;
       }
       
       console.log('Submitting campaign update:', campaignToSubmit);
@@ -222,6 +254,95 @@ function EditCampaign() {
             value={campaign.scheduledStartTime || ''}
             onChange={handleChange}
           />
+        </div>
+        
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold mb-3">Sending Controls</h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="minDelaySeconds">
+                Minimum Delay Between Messages (seconds)
+              </label>
+              <input
+                type="number"
+                id="minDelaySeconds"
+                name="minDelaySeconds"
+                min="1"
+                max="300"
+                value={campaign.minDelaySeconds || 3}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="maxDelaySeconds">
+                Maximum Delay Between Messages (seconds)
+              </label>
+              <input
+                type="number"
+                id="maxDelaySeconds"
+                name="maxDelaySeconds"
+                min="1"
+                max="300"
+                value={campaign.maxDelaySeconds || 5}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+          </div>
+          
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="dailyLimit">
+              Daily Message Limit (0 = no limit)
+            </label>
+            <input
+              type="number"
+              id="dailyLimit"
+              name="dailyLimit"
+              min="0"
+              value={campaign.dailyLimit || 0}
+              onChange={handleChange}
+              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            />
+            <p className="text-sm text-gray-500 mt-1">
+              Set a maximum number of messages to send per day
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="timeWindowStart">
+                Sending Window Start Time
+              </label>
+              <input
+                type="time"
+                id="timeWindowStart"
+                name="timeWindowStart"
+                value={campaign.timeWindowStart || ''}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="timeWindowEnd">
+                Sending Window End Time
+              </label>
+              <input
+                type="time"
+                id="timeWindowEnd"
+                name="timeWindowEnd"
+                value={campaign.timeWindowEnd || ''}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+          </div>
+          <p className="text-sm text-gray-500 mt-1">
+            Optional: Only send messages during this time window (your local time)
+          </p>
         </div>
         
         <div className="flex items-center justify-between">

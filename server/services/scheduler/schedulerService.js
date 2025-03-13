@@ -176,6 +176,144 @@ class SchedulerService {
     
     return false;
   }
+
+  async processCampaignRecipients(campaign, recipients) {
+    try {
+      console.log(`Processing ${recipients.length} recipients for campaign ${campaign.id}`);
+      
+      // Get campaign timing settings
+      const minDelay = campaign.min_delay_seconds || 3;
+      const maxDelay = campaign.max_delay_seconds || 5;
+      const dailyLimit = campaign.daily_limit || 0;
+      const timeWindowStart = campaign.time_window_start;
+      const timeWindowEnd = campaign.time_window_end;
+      
+      // Track messages sent today
+      let messagesSentToday = 0;
+      
+      // Get count of messages already sent today if daily limit is set
+      if (dailyLimit > 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const { count, error } = await supabase
+          .from('recipients')
+          .select('id', { count: 'exact' })
+          .eq('campaign_id', campaign.id)
+          .eq('status', 'sent')
+          .gte('sent_at', today.toISOString());
+        
+        if (!error) {
+          messagesSentToday = count;
+        }
+      }
+      
+      // Initialize WhatsApp service
+      await whatsappService.initialize();
+      
+      // Process each recipient
+      for (const recipient of recipients) {
+        // Check if campaign has been paused or deleted
+        const currentCampaign = await Campaign.findById(campaign.id);
+        if (!currentCampaign || currentCampaign.status !== 'in_progress') {
+          console.log(`Campaign ${campaign.id} is no longer in progress, stopping processing`);
+          await whatsappService.close();
+          return;
+        }
+        
+        // Check daily limit
+        if (dailyLimit > 0 && messagesSentToday >= dailyLimit) {
+          console.log(`Daily limit of ${dailyLimit} messages reached, pausing until tomorrow`);
+          await Campaign.updateStatus(campaign.id, 'paused');
+          await whatsappService.close();
+          return;
+        }
+        
+        // Check time window if set
+        if (timeWindowStart && timeWindowEnd) {
+          const now = new Date();
+          const currentTime = now.getHours() * 60 + now.getMinutes(); // Convert to minutes since midnight
+          
+          // Parse time window strings (format: "HH:MM")
+          const [startHour, startMinute] = timeWindowStart.split(':').map(Number);
+          const [endHour, endMinute] = timeWindowEnd.split(':').map(Number);
+          
+          const windowStart = startHour * 60 + startMinute;
+          const windowEnd = endHour * 60 + endMinute;
+          
+          if (currentTime < windowStart || currentTime > windowEnd) {
+            console.log(`Current time is outside sending window (${timeWindowStart}-${timeWindowEnd}), pausing`);
+            await Campaign.updateStatus(campaign.id, 'paused');
+            await whatsappService.close();
+            return;
+          }
+        }
+        
+        // Generate message content
+        let messageContent = campaign.message_template;
+        
+        // Replace placeholders
+        messageContent = messageContent.replace(/{name}/g, recipient.name);
+        
+        // Use AI to enhance message if enabled
+        if (campaign.use_ai && campaign.ai_prompt) {
+          try {
+            messageContent = await messageGenerationService.enhanceMessage(
+              messageContent, 
+              campaign.ai_prompt,
+              recipient.name
+            );
+          } catch (aiError) {
+            console.error('Error enhancing message with AI:', aiError);
+            // Continue with original message if AI enhancement fails
+          }
+        }
+        
+        // Update recipient status to processing
+        await Recipient.updateStatus(recipient.id, 'processing', { message: messageContent });
+        
+        // Send the message
+        const result = await whatsappService.sendMessage(recipient.phone_number, messageContent);
+        
+        if (result.success) {
+          // Update recipient status
+          await Recipient.updateStatus(recipient.id, 'sent', { 
+            sent_at: new Date().toISOString() 
+          });
+          messagesSentToday++;
+        } else {
+          // Mark as failed
+          await Recipient.updateStatus(recipient.id, 'failed', { 
+            failure_reason: result.error 
+          });
+        }
+        
+        // Add a random delay between messages using the configured min/max delay
+        const delayMs = (Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      
+      // Close WhatsApp service
+      await whatsappService.close();
+      
+      // Check if all recipients have been processed
+      const remainingRecipients = await Recipient.findByCampaignId(campaign.id);
+      const stillPending = remainingRecipients.filter(r => r.status === 'pending').length;
+      
+      if (stillPending === 0) {
+        // Mark campaign as completed if no pending recipients
+        await Campaign.updateStatus(campaign.id, 'completed');
+      }
+    } catch (error) {
+      console.error('Error processing campaign recipients:', error);
+      // Try to close WhatsApp service in case of error
+      try {
+        await whatsappService.close();
+      } catch (closeError) {
+        console.error('Error closing WhatsApp service:', closeError);
+      }
+    }
+  }
 }
 
 module.exports = new SchedulerService(); 

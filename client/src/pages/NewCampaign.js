@@ -11,7 +11,12 @@ function NewCampaign() {
     useAI: false,
     aiPrompt: '',
     scheduledStartTime: '',
-    recipients: []
+    recipients: [],
+    minDelaySeconds: 3,
+    maxDelaySeconds: 5,
+    dailyLimit: 0,
+    timeWindowStart: '',
+    timeWindowEnd: ''
   });
   const [recipientInput, setRecipientInput] = useState({ name: '', phoneNumber: '' });
   const [error, setError] = useState('');
@@ -62,14 +67,37 @@ function NewCampaign() {
     try {
       setLoading(true);
       
-      // Create campaign
+      // Process time windows
+      let timeWindowStart = formData.timeWindowStart;
+      let timeWindowEnd = formData.timeWindowEnd;
+      
+      if (!timeWindowStart || timeWindowStart.trim() === '') {
+        timeWindowStart = null;
+      }
+      
+      if (!timeWindowEnd || timeWindowEnd.trim() === '') {
+        timeWindowEnd = null;
+      }
+      
+      // If one is null, make both null
+      if (timeWindowStart === null || timeWindowEnd === null) {
+        timeWindowStart = null;
+        timeWindowEnd = null;
+      }
+      
+      // Create campaign with the new fields
       const campaignResponse = await api.post('/campaigns', {
         name: formData.name,
         description: formData.description,
         messageTemplate: formData.messageTemplate,
         useAI: formData.useAI,
         aiPrompt: formData.aiPrompt,
-        scheduledStartTime: formData.scheduledStartTime || null
+        scheduledStartTime: formData.scheduledStartTime || null,
+        minDelaySeconds: parseInt(formData.minDelaySeconds) || 3,
+        maxDelaySeconds: parseInt(formData.maxDelaySeconds) || 5,
+        dailyLimit: parseInt(formData.dailyLimit) || 0,
+        timeWindowStart: timeWindowStart,
+        timeWindowEnd: timeWindowEnd
       });
       
       const campaignId = campaignResponse.data.id;
@@ -192,6 +220,95 @@ function NewCampaign() {
             onChange={handleChange}
             className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
           />
+        </div>
+        
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold mb-3">Sending Controls</h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="minDelaySeconds">
+                Minimum Delay Between Messages (seconds)
+              </label>
+              <input
+                type="number"
+                id="minDelaySeconds"
+                name="minDelaySeconds"
+                min="1"
+                max="300"
+                value={formData.minDelaySeconds}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="maxDelaySeconds">
+                Maximum Delay Between Messages (seconds)
+              </label>
+              <input
+                type="number"
+                id="maxDelaySeconds"
+                name="maxDelaySeconds"
+                min="1"
+                max="300"
+                value={formData.maxDelaySeconds}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+          </div>
+          
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="dailyLimit">
+              Daily Message Limit (0 = no limit)
+            </label>
+            <input
+              type="number"
+              id="dailyLimit"
+              name="dailyLimit"
+              min="0"
+              value={formData.dailyLimit}
+              onChange={handleChange}
+              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            />
+            <p className="text-sm text-gray-500 mt-1">
+              Set a maximum number of messages to send per day
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="timeWindowStart">
+                Sending Window Start Time
+              </label>
+              <input
+                type="time"
+                id="timeWindowStart"
+                name="timeWindowStart"
+                value={formData.timeWindowStart}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="timeWindowEnd">
+                Sending Window End Time
+              </label>
+              <input
+                type="time"
+                id="timeWindowEnd"
+                name="timeWindowEnd"
+                value={formData.timeWindowEnd}
+                onChange={handleChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+          </div>
+          <p className="text-sm text-gray-500 mt-1">
+            Optional: Only send messages during this time window (your local time)
+          </p>
         </div>
         
         <div className="mb-6">

@@ -576,6 +576,25 @@ function CampaignDetail() {
       </div>
 
       <div className="bg-white shadow rounded-lg p-6">
+        <h2 className="text-lg font-semibold mb-4">Sending Controls</h2>
+        <p>
+          <span className="font-medium">Message Delay:</span> {campaign.minDelaySeconds || campaign.min_delay_seconds || 3}-{campaign.maxDelaySeconds || campaign.max_delay_seconds || 5} seconds
+        </p>
+        
+        {(campaign.dailyLimit || campaign.daily_limit) > 0 && (
+          <p>
+            <span className="font-medium">Daily Limit:</span> {campaign.dailyLimit || campaign.daily_limit} messages
+          </p>
+        )}
+        
+        {(campaign.timeWindowStart || campaign.time_window_start) && (campaign.timeWindowEnd || campaign.time_window_end) && (
+          <p>
+            <span className="font-medium">Sending Window:</span> {campaign.timeWindowStart || campaign.time_window_start} - {campaign.timeWindowEnd || campaign.time_window_end}
+          </p>
+        )}
+      </div>
+
+      <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-lg font-semibold mb-4">Recipients ({recipients.length})</h2>
         
         {/* Full-width search with nicer design */}

@@ -13,7 +13,12 @@ exports.createCampaign = async (req, res) => {
       useAI, 
       aiPrompt,
       scheduledStartTime,
-      scheduledEndTime
+      scheduledEndTime,
+      minDelaySeconds,
+      maxDelaySeconds,
+      dailyLimit,
+      timeWindowStart,
+      timeWindowEnd
     } = req.body;
     
     const campaign = await Campaign.create({
@@ -24,7 +29,12 @@ exports.createCampaign = async (req, res) => {
       useAI,
       aiPrompt,
       scheduledStartTime: scheduledStartTime ? new Date(scheduledStartTime) : null,
-      scheduledEndTime: scheduledEndTime ? new Date(scheduledEndTime) : null
+      scheduledEndTime: scheduledEndTime ? new Date(scheduledEndTime) : null,
+      minDelaySeconds: minDelaySeconds || 3,
+      maxDelaySeconds: maxDelaySeconds || 5,
+      dailyLimit: dailyLimit || 0,
+      timeWindowStart,
+      timeWindowEnd
     });
     
     res.status(201).json(campaign);
@@ -78,7 +88,38 @@ exports.updateCampaign = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized' });
     }
     
-    const updatedCampaign = await Campaign.update(req.params.id, req.body);
+    // Prepare the update data with proper field mapping
+    const updateData = {
+      name: req.body.name,
+      description: req.body.description,
+      messageTemplate: req.body.messageTemplate,
+      useAI: req.body.useAI,
+      aiPrompt: req.body.aiPrompt,
+      status: req.body.status || campaign.status,
+      scheduledStartTime: req.body.scheduledStartTime && req.body.scheduledStartTime.trim() !== '' 
+        ? req.body.scheduledStartTime 
+        : null,
+      scheduledEndTime: req.body.scheduledEndTime && req.body.scheduledEndTime.trim() !== ''
+        ? req.body.scheduledEndTime
+        : null,
+      minDelaySeconds: parseInt(req.body.minDelaySeconds) || 3,
+      maxDelaySeconds: parseInt(req.body.maxDelaySeconds) || 5,
+      dailyLimit: parseInt(req.body.dailyLimit) || 0,
+      timeWindowStart: req.body.timeWindowStart || null,
+      timeWindowEnd: req.body.timeWindowEnd || null
+    };
+    
+    // Validate time windows - if one is provided, both should be
+    if ((updateData.timeWindowStart && !updateData.timeWindowEnd) || 
+        (!updateData.timeWindowStart && updateData.timeWindowEnd)) {
+      return res.status(400).json({ 
+        message: 'Both start and end time windows must be provided together' 
+      });
+    }
+    
+    console.log('Update data prepared:', updateData);
+    
+    const updatedCampaign = await Campaign.update(req.params.id, updateData);
     
     if (updatedCampaign.status === 'scheduled' && updatedCampaign.scheduled_start_time) {
       schedulerService.scheduleCampaign(updatedCampaign);
@@ -86,6 +127,7 @@ exports.updateCampaign = async (req, res) => {
     
     res.json(updatedCampaign);
   } catch (error) {
+    console.error('Error updating campaign:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -452,150 +494,171 @@ exports.resetRecipientStatus = async (req, res) => {
 // Helper function to process campaign in background
 async function processCampaign(campaign, recipients, userId) {
   try {
-    // First check if campaign still exists
-    const campaignStillExists = await Campaign.findById(campaign.id);
-    if (!campaignStillExists) {
-      console.log(`Campaign ${campaign.id} no longer exists, skipping processing`);
-      return; // Exit early if campaign doesn't exist
-    }
+    // Update campaign status to in_progress
+    await Campaign.updateStatus(campaign.id, 'in_progress');
     
-    // Initialize WhatsApp service
-    const whatsappService = require('../services/automation/whatsappService');
-    const aiService = require('../services/ai/messageGenerationService');
+    // Get campaign timing settings
+    const minDelay = campaign.min_delay_seconds || 3;
+    const maxDelay = campaign.max_delay_seconds || 5;
+    const dailyLimit = campaign.daily_limit || 0;
+    const timeWindowStart = campaign.time_window_start;
+    const timeWindowEnd = campaign.time_window_end;
     
-    // Initialize WhatsApp
-    try {
-      await whatsappService.initialize(userId);
-    } catch (initError) {
-      console.error('Error initializing WhatsApp:', initError);
+    // Track messages sent today
+    let messagesSentToday = 0;
+    
+    // Get count of messages already sent today if daily limit is set
+    if (dailyLimit > 0) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
       
-      // Try to update campaign status if it still exists
-      try {
-        const stillExists = await Campaign.findById(campaign.id);
-        if (stillExists) {
-          await Campaign.updateStatus(campaign.id, 'paused');
-        }
-      } catch (updateError) {
-        console.error('Error updating campaign status after init failure:', updateError);
+      const { count, error } = await supabase
+        .from('recipients')
+        .select('id', { count: 'exact' })
+        .eq('campaign_id', campaign.id)
+        .eq('status', 'sent')
+        .gte('sent_at', today.toISOString());
+      
+      if (!error) {
+        messagesSentToday = count;
       }
-      return;
     }
     
     // Process each recipient
     for (const recipient of recipients) {
-      // Check if campaign is still active before processing each recipient
+      // Check if campaign has been paused or deleted
+      const currentCampaign = await Campaign.findById(campaign.id);
+      if (!currentCampaign || currentCampaign.status !== 'in_progress') {
+        console.log(`Campaign ${campaign.id} is no longer in progress, stopping processing`);
+        return;
+      }
+      
+      // Check daily limit
+      if (dailyLimit > 0 && messagesSentToday >= dailyLimit) {
+        console.log(`Daily limit of ${dailyLimit} messages reached, pausing until tomorrow`);
+        await Campaign.updateStatus(campaign.id, 'paused');
+        return;
+      }
+      
+      // Check time window if set
+      if (timeWindowStart && timeWindowEnd) {
+        const now = new Date();
+        const currentTime = now.getHours() * 60 + now.getMinutes(); // Convert to minutes since midnight
+        
+        // Parse time window strings (format: "HH:MM")
+        const [startHour, startMinute] = timeWindowStart.split(':').map(Number);
+        const [endHour, endMinute] = timeWindowEnd.split(':').map(Number);
+        
+        const windowStart = startHour * 60 + startMinute;
+        const windowEnd = endHour * 60 + endMinute;
+        
+        if (currentTime < windowStart || currentTime > windowEnd) {
+          console.log(`Current time is outside sending window (${timeWindowStart}-${timeWindowEnd}), pausing`);
+          await Campaign.updateStatus(campaign.id, 'paused');
+          return;
+        }
+      }
+      
+      // Check if recipient still exists
+      const recipientExists = await Recipient.findById(recipient.id);
+      if (!recipientExists) {
+        console.log(`Recipient ${recipient.id} no longer exists, skipping`);
+        continue;
+      }
+      
       try {
-        const currentCampaign = await Campaign.findById(campaign.id);
-        if (!currentCampaign) {
-          console.log(`Campaign ${campaign.id} no longer exists, stopping processing`);
-          return;
-        }
-        
-        if (currentCampaign.status !== 'in_progress') {
-          console.log(`Campaign ${campaign.id} is no longer in progress (status: ${currentCampaign.status}), stopping processing`);
-          return;
-        }
-        
-        // Check if recipient still exists
-        const recipientExists = await Recipient.findById(recipient.id);
-        if (!recipientExists) {
-          console.log(`Recipient ${recipient.id} no longer exists, skipping`);
-          continue;
-        }
-        
+        // Update recipient status to processing
         try {
-          // Update recipient status to processing
+          await Recipient.updateStatus(recipient.id, 'processing');
+        } catch (statusError) {
+          console.error(`Error updating recipient ${recipient.id} status to processing:`, statusError);
+          // Continue anyway
+        }
+        
+        // Generate message content
+        let messageContent;
+        if (campaign.use_ai) {
           try {
-            await Recipient.updateStatus(recipient.id, 'processing');
-          } catch (statusError) {
-            console.error(`Error updating recipient ${recipient.id} status to processing:`, statusError);
-            // Continue anyway
-          }
-          
-          // Generate message content
-          let messageContent;
-          if (campaign.use_ai) {
-            try {
-              messageContent = await aiService.generateMessage(
-                campaign.message_template,
-                campaign.ai_prompt,
-                recipient.name
-              );
-            } catch (aiError) {
-              console.error('Error generating AI message:', aiError);
-              // Fallback to template
-              messageContent = campaign.message_template.replace('{name}', recipient.name || 'there');
-            }
-          } else {
-            // Use template with basic name replacement
+            messageContent = await aiService.generateMessage(
+              campaign.message_template,
+              campaign.ai_prompt,
+              recipient.name
+            );
+          } catch (aiError) {
+            console.error('Error generating AI message:', aiError);
+            // Fallback to template
             messageContent = campaign.message_template.replace('{name}', recipient.name || 'there');
           }
-          
-          // Store the generated message
-          try {
-            await Recipient.updateStatus(recipient.id, 'processing', null, null, messageContent);
-          } catch (updateError) {
-            console.error(`Error storing message for recipient ${recipient.id}:`, updateError);
-            // Continue anyway
-          }
-          
-          // Send the message
-          let result;
-          try {
-            result = await whatsappService.sendMessage(recipient.phone_number, messageContent);
-          } catch (sendError) {
-            console.error(`Error sending message to ${recipient.phone_number}:`, sendError);
-            
-            // Try to update recipient status
-            try {
-              await Recipient.updateStatus(recipient.id, 'failed', null, sendError.message);
-            } catch (updateError) {
-              console.error(`Error updating recipient status after send failure:`, updateError);
-            }
-            
-            // Skip to next recipient
-            continue;
-          }
-          
-          // Update recipient status based on result
-          try {
-            if (result.success) {
-              await Recipient.updateStatus(recipient.id, 'sent', new Date());
-              console.log(`Message sent to ${recipient.name} (${recipient.phone_number})`);
-            } else {
-              await Recipient.updateStatus(
-                recipient.id, 
-                'failed', 
-                null, 
-                result.error
-              );
-              console.error(`Failed to send message to ${recipient.name}:`, result.error);
-            }
-          } catch (statusUpdateError) {
-            console.error(`Error updating recipient status after send:`, statusUpdateError);
-          }
-          
-          // Add a delay between messages to avoid spam detection
-          await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
-          
-        } catch (recipientError) {
-          console.error(`Error processing recipient ${recipient.name}:`, recipientError);
+        } else {
+          // Use template with basic name replacement
+          messageContent = campaign.message_template.replace('{name}', recipient.name || 'there');
+        }
+        
+        // Store the generated message
+        try {
+          await Recipient.updateStatus(recipient.id, 'processing', null, null, messageContent);
+        } catch (updateError) {
+          console.error(`Error storing message for recipient ${recipient.id}:`, updateError);
+          // Continue anyway
+        }
+        
+        // Send the message
+        let result;
+        try {
+          result = await whatsappService.sendMessage(recipient.phone_number, messageContent);
+        } catch (sendError) {
+          console.error(`Error sending message to ${recipient.phone_number}:`, sendError);
           
           // Try to update recipient status
           try {
+            await Recipient.updateStatus(recipient.id, 'failed', null, sendError.message);
+          } catch (updateError) {
+            console.error(`Error updating recipient status after send failure:`, updateError);
+          }
+          
+          // Skip to next recipient
+          continue;
+        }
+        
+        // Update recipient status based on result
+        try {
+          if (result.success) {
+            await Recipient.updateStatus(recipient.id, 'sent', new Date());
+            console.log(`Message sent to ${recipient.name} (${recipient.phone_number})`);
+          } else {
             await Recipient.updateStatus(
               recipient.id, 
               'failed', 
               null, 
-              recipientError.message
+              result.error
             );
-          } catch (updateError) {
-            console.error(`Error updating recipient status after processing error:`, updateError);
+            console.error(`Failed to send message to ${recipient.name}:`, result.error);
           }
+        } catch (statusUpdateError) {
+          console.error(`Error updating recipient status after send:`, statusUpdateError);
         }
-      } catch (checkError) {
-        console.error(`Error checking campaign/recipient status:`, checkError);
-        // Continue to next recipient
+        
+        // After successful send:
+        messagesSentToday++;
+        
+        // Add a delay between messages using the configured min/max delay
+        const delayMs = (Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        
+      } catch (recipientError) {
+        console.error(`Error processing recipient ${recipient.name}:`, recipientError);
+        
+        // Try to update recipient status
+        try {
+          await Recipient.updateStatus(
+            recipient.id, 
+            'failed', 
+            null, 
+            recipientError.message
+          );
+        } catch (updateError) {
+          console.error(`Error updating recipient status after processing error:`, updateError);
+        }
       }
     }
     
@@ -615,7 +678,7 @@ async function processCampaign(campaign, recipients, userId) {
     }
     
   } catch (error) {
-    console.error('Campaign processing error:', error);
+    console.error('Error processing campaign:', error);
     
     // Try to update campaign status if it still exists
     try {
