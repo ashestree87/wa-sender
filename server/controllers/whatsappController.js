@@ -1,5 +1,6 @@
 const whatsappService = require('../services/automation/whatsappService');
 const { v4: uuidv4 } = require('uuid');
+const supabase = require('../config/database');
 
 exports.initializeSession = async (req, res) => {
   try {
@@ -61,32 +62,58 @@ exports.initializeSession = async (req, res) => {
   }
 };
 
-exports.getSessionStatus = async (req, res) => {
+exports.getStatus = async (req, res) => {
   try {
+    // Check if a specific connection ID was provided
     const { connectionId } = req.query;
     
     if (connectionId) {
       // Get status for a specific connection
       const status = await whatsappService.getStatus(connectionId);
-      res.json({ ...status, success: true });
+      
+      // Return the status
+      res.json({
+        ...status,
+        success: true
+      });
     } else {
-      // Get all connections for the user
+      // Get all connections for this user
       const result = await whatsappService.getUserConnections(req.userId);
       
       if (!result.success) {
         return res.status(500).json({
-          message: 'Failed to get connections',
+          message: 'Failed to get WhatsApp connections',
           error: result.error,
           success: false
         });
       }
       
-      res.json({ connections: result.connections, success: true });
+      // For each connection, get its current status
+      const connections = [];
+      for (const conn of result.connections) {
+        const status = await whatsappService.getStatus(conn.id);
+        
+        connections.push({
+          id: conn.id,
+          name: conn.name,
+          status: status.status,
+          qr_code: status.qrCode,
+          phoneNumber: status.phoneNumber,
+          needsReconnect: status.needsReconnect || false,
+          created_at: conn.created_at,
+          updated_at: conn.updated_at
+        });
+      }
+      
+      res.json({
+        connections,
+        success: true
+      });
     }
   } catch (error) {
     console.error('Get status error:', error);
-    res.status(500).json({ 
-      message: 'Failed to get status', 
+    res.status(500).json({
+      message: 'Failed to get WhatsApp status',
       error: error.message,
       success: false
     });
@@ -218,6 +245,55 @@ exports.deleteConnection = async (req, res) => {
     console.error('Delete connection error:', error);
     res.status(500).json({ 
       message: 'Failed to delete WhatsApp connection', 
+      error: error.message,
+      success: false
+    });
+  }
+};
+
+// Debug endpoint to check client state
+exports.debugClientState = async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    
+    if (!connectionId) {
+      return res.status(400).json({ 
+        message: 'Connection ID is required', 
+        success: false 
+      });
+    }
+    
+    // Get the client instance from the service
+    const clientInstance = whatsappService.clients.get(connectionId);
+    
+    // Get the database record
+    const { data, error } = await supabase
+      .from('whatsapp_connections')
+      .select('*')
+      .eq('id', connectionId)
+      .single();
+    
+    if (error) {
+      return res.status(500).json({
+        message: 'Failed to get connection from database',
+        error: error.message,
+        success: false
+      });
+    }
+    
+    // Return debug information
+    res.json({
+      clientInMemory: !!clientInstance,
+      clientAuthenticated: clientInstance ? clientInstance.isAuthenticated : false,
+      databaseStatus: data ? data.status : 'not_found',
+      databasePhoneNumber: data ? data.phoneNumber : null,
+      needsReconnect: !clientInstance && data && data.status === 'authenticated',
+      success: true
+    });
+  } catch (error) {
+    console.error('Debug client state error:', error);
+    res.status(500).json({
+      message: 'Failed to debug client state',
       error: error.message,
       success: false
     });

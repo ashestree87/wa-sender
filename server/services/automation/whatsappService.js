@@ -83,14 +83,14 @@ class WhatsAppService {
         
         // Get the client info including phone number
         try {
-          const clientInfo = await clientInstance.client.getWid();
-          const phoneNumber = clientInfo ? clientInfo.user : 'Unknown';
+          const info = await clientInstance.client.info;
+          const phoneNumber = info ? info.wid.user : 'Unknown';
           console.log(`WhatsApp authenticated with phone number: ${phoneNumber}`);
           
           // Update the connection status and phone number in the database
           await this.updateConnectionInDb(connectionId, {
             status: 'authenticated',
-            phone_number: phoneNumber,
+            phoneNumber: phoneNumber,
             last_active: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             qr_code: null
@@ -242,16 +242,32 @@ class WhatsAppService {
       if (connectionId) {
         const clientInstance = this.clients.get(connectionId);
         
-        // If client exists in memory, return its status
+        // Check database first
+        const { data, error } = await supabase
+          .from('whatsapp_connections')
+          .select('*')
+          .eq('id', connectionId)
+          .single();
+        
+        if (error && error.code !== 'PGRST116') {
+          console.error(`Error getting connection from DB for ${connectionId}:`, error);
+          return { status: 'error', error: error.message, success: false };
+        }
+        
+        // If client exists in memory, check its status
         if (clientInstance) {
           if (clientInstance.isAuthenticated) {
             // Try to get phone number if available
             let phoneNumber = 'Unknown';
             try {
-              const clientInfo = await clientInstance.client.getWid();
-              phoneNumber = clientInfo ? clientInfo.user : 'Unknown';
+              const info = await clientInstance.client.info;
+              phoneNumber = info ? info.wid.user : 'Unknown';
             } catch (error) {
               console.error(`Error getting phone number for connection ${connectionId}:`, error);
+              // If we can't get info, the connection might be broken
+              if (data && data.phoneNumber) {
+                phoneNumber = data.phoneNumber; // Use stored phone number
+              }
             }
             
             return { 
@@ -270,33 +286,35 @@ class WhatsAppService {
           }
         }
         
-        // If client doesn't exist in memory, check the database
-        const { data, error } = await supabase
-          .from('whatsapp_connections')
-          .select('*')
-          .eq('id', connectionId)
-          .single();
-        
-        if (error) {
-          console.error(`Error getting connection from DB for ${connectionId}:`, error);
-          return { status: 'error', error: error.message, success: false };
+        // If client doesn't exist in memory but database shows authenticated,
+        // we need to reinitialize the client
+        if (data && data.status === 'authenticated') {
+          console.log(`Connection ${connectionId} is marked as authenticated in DB but not in memory. Consider reinitializing.`);
+          
+          // Return the database status but add a flag indicating reconnection might be needed
+          return {
+            status: data.status,
+            phoneNumber: data.phoneNumber || 'Unknown',
+            needsReconnect: true,
+            success: true
+          };
         }
         
+        // Return database status if available
         if (data) {
-          // If connection exists in DB but not in memory, it's not initialized
-          if (data.status === 'awaiting_qr' && data.qr_code) {
+          // Include phone number if authenticated
+          if (data.status === 'authenticated' && data.phoneNumber) {
             return { 
-              status: 'awaiting_qr', 
-              qrCode: data.qr_code,
+              status: data.status, 
+              phoneNumber: data.phoneNumber,
               success: true 
             };
           }
           
-          // Include phone number if authenticated
-          if (data.status === 'authenticated' && data.phone_number) {
+          if (data.status === 'awaiting_qr' && data.qr_code) {
             return { 
-              status: data.status, 
-              phoneNumber: data.phone_number,
+              status: 'awaiting_qr', 
+              qrCode: data.qr_code,
               success: true 
             };
           }
@@ -416,35 +434,45 @@ class WhatsAppService {
   async close(connectionId) {
     try {
       const clientInstance = this.clients.get(connectionId);
+      
+      // First, update the database regardless of client instance
+      await this.updateConnectionInDb(connectionId, {
+        status: 'disconnected',
+        updated_at: new Date().toISOString()
+      });
+      
       if (clientInstance) {
         console.log(`Closing WhatsApp client session for connection ${connectionId}...`);
         
         // Try to destroy the client
-        await clientInstance.client.destroy();
-        console.log(`WhatsApp client session closed successfully for connection ${connectionId}`);
-        
-        // Update the connection status in the database
-        await this.updateConnectionInDb(connectionId, {
-          status: 'disconnected',
-          updated_at: new Date().toISOString()
-        });
+        try {
+          await clientInstance.client.destroy();
+          console.log(`WhatsApp client session closed successfully for connection ${connectionId}`);
+        } catch (destroyError) {
+          console.error(`Error destroying WhatsApp client for connection ${connectionId}:`, destroyError);
+          // Continue with cleanup even if destroy fails
+        }
         
         // Remove from our map
         this.clients.delete(connectionId);
         
         return true;
       } else {
-        console.log(`No active WhatsApp client session to close for connection ${connectionId}`);
-        return false;
+        console.log(`No active WhatsApp client session in memory for connection ${connectionId}, but database updated`);
+        return true; // Return true since we've updated the database
       }
     } catch (error) {
       console.error(`Error in WhatsApp close method for connection ${connectionId}:`, error);
       
       // Update the connection status in the database
-      await this.updateConnectionInDb(connectionId, {
-        status: 'error',
-        updated_at: new Date().toISOString()
-      });
+      try {
+        await this.updateConnectionInDb(connectionId, {
+          status: 'error',
+          updated_at: new Date().toISOString()
+        });
+      } catch (dbError) {
+        console.error(`Failed to update connection status in database for ${connectionId}:`, dbError);
+      }
       
       // Remove from our map even if there's an error
       this.clients.delete(connectionId);

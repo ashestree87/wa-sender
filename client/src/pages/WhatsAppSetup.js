@@ -21,18 +21,17 @@ function WhatsAppSetup() {
     try {
       console.log('Fetching WhatsApp connections...');
       const response = await api.get('/whatsapp/status');
-      console.log('WhatsApp connections response:', response.data);
       
       if (response.data.connections) {
         // If the backend returns connections array, use it
-        // Make sure we're mapping the QR code correctly
         const connections = response.data.connections.map(conn => ({
           ...conn,
-          qrCode: conn.qr_code || conn.qrCode // Handle both formats
+          qrCode: conn.qr_code || conn.qrCode, // Handle both formats
+          needsReconnect: conn.needsReconnect || false,
+          phoneNumber: conn.phoneNumber || conn.phone_number || 'Unknown'
         }));
         
         setConnections(connections);
-        console.log('Connections set:', connections);
       } else {
         // Fallback to creating a single connection from status
         const connection = {
@@ -40,11 +39,11 @@ function WhatsAppSetup() {
           name: 'Default Connection',
           status: response.data.status,
           qrCode: response.data.qrCode,
-          phoneNumber: response.data.phoneNumber || 'Unknown'
+          phoneNumber: response.data.phoneNumber || 'Unknown',
+          needsReconnect: response.data.needsReconnect || false
         };
         
         setConnections([connection]);
-        console.log('Single connection set:', connection);
       }
       setError(null);
     } catch (err) {
@@ -151,7 +150,11 @@ function WhatsAppSetup() {
   };
 
   // Helper function to get status display text
-  const getStatusDisplay = (status) => {
+  const getStatusDisplay = (status, needsReconnect) => {
+    if (status === 'authenticated' && needsReconnect) {
+      return 'Connected (Needs Reconnect)';
+    }
+    
     switch (status) {
       case 'authenticated':
         return 'Connected';
@@ -167,7 +170,11 @@ function WhatsAppSetup() {
   };
 
   // Helper function to get status color
-  const getStatusColor = (status) => {
+  const getStatusColor = (status, needsReconnect) => {
+    if (status === 'authenticated' && needsReconnect) {
+      return 'bg-yellow-100 text-yellow-800';
+    }
+    
     switch (status) {
       case 'authenticated':
         return 'bg-green-100 text-green-800';
@@ -249,8 +256,8 @@ function WhatsAppSetup() {
               <div className="flex justify-between items-center mb-4">
                 <div>
                   <h2 className="text-lg font-semibold">{connection.name}</h2>
-                  <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm ${getStatusColor(connection.status)}`}>
-                    {getStatusDisplay(connection.status)}
+                  <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm ${getStatusColor(connection.status, connection.needsReconnect)}`}>
+                    {getStatusDisplay(connection.status, connection.needsReconnect)}
                   </div>
                 </div>
                 <div className="space-x-2">
@@ -273,7 +280,18 @@ function WhatsAppSetup() {
                     </button>
                   )}
                   
-                  {connection.status === 'authenticated' && (
+                  {/* Show Reconnect button when authenticated but needs reconnect */}
+                  {connection.status === 'authenticated' && connection.needsReconnect && (
+                    <button
+                      onClick={() => handleInitialize(connection.id)}
+                      disabled={isLoading}
+                      className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600 disabled:opacity-50 text-sm"
+                    >
+                      Reconnect
+                    </button>
+                  )}
+                  
+                  {connection.status === 'authenticated' && !connection.needsReconnect && (
                     <button
                       onClick={() => handleLogout(connection.id)}
                       disabled={isLoading}
@@ -313,10 +331,15 @@ function WhatsAppSetup() {
 
               {connection.status === 'authenticated' && (
                 <div className="mt-4">
-                  <div className="p-3 bg-green-50 rounded">
-                    <p className="text-green-700">
+                  <div className={`p-3 ${connection.needsReconnect ? 'bg-yellow-50' : 'bg-green-50'} rounded`}>
+                    <p className={connection.needsReconnect ? 'text-yellow-700' : 'text-green-700'}>
                       <span className="font-semibold">Connected as:</span> {connection.phoneNumber || 'Unknown'}
                     </p>
+                    {connection.needsReconnect && (
+                      <p className="text-sm text-yellow-600 mt-1">
+                        Session needs to be reconnected. Click the "Reconnect" button above.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
