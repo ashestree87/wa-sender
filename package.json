@@ -1,7 +1,7 @@
 {
   "scripts": {
     "start": "node server/index.js",
-    "dev": "nodemon server/index.js",
+    "dev": "nodemon --legacy-watch --watch server server/index.js",
     "build": "cd client && npm install && npm run build"
   },
   "dependencies": {

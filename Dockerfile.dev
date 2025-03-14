@@ -35,4 +35,4 @@ RUN npm install -g nodemon
 EXPOSE 3000
 
 # Start the server in development mode with nodemon
-CMD ["npm", "run", "dev"] 
+CMD ["nodemon", "--legacy-watch", "--watch", "server", "server/index.js"] 
