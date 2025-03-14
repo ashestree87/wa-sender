@@ -52,4 +52,4 @@ COPY --from=build /app /app
 EXPOSE 3000
 
 # Start the server
-CMD ["node", "server/index.js"]
+CMD ["node", "/app/server/index.js"]

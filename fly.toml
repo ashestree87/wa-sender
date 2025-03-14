@@ -3,21 +3,37 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'wa-sender'
-primary_region = 'syd'
+app = "wa-sender"
+primary_region = "syd"
 
 [build]
+  dockerfile = "Dockerfile"
 
 [env]
-  PORT = '8080'
+  PORT = "8080"
+  NODE_ENV = "production"
 
 [http_service]
-  internal_port = 8080
+  internal_port = 3000
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
+  processes = ["app"]
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3000
+  processes = ["app"]
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
 
 [[vm]]
   memory = '1gb'
