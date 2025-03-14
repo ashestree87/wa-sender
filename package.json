@@ -1,6 +1,8 @@
 {
   "scripts": {
-    "start": "node index.js"
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "build": "cd client && npm install && npm run build"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
@@ -19,6 +21,7 @@
     "whatsapp-web.js": "^1.26.0"
   },
   "devDependencies": {
-    "axios": "^1.8.2"
+    "axios": "^1.8.2",
+    "nodemon": "^3.0.0"
   }
 }

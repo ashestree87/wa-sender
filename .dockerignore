@@ -1,35 +1,29 @@
-fly.toml
-Dockerfile
-.dockerignore
-node_modules
-.git
-# Node
-node_modules
-npm-debug.log
-dist
-build
-
-# Environment
-.env
-.env.*
-
-# WhatsApp sessions
-sessions/
-**/sessions/
-
-# IDE
-.vscode
-.idea
-
-# System
-.DS_Store
-Thumbs.db
-
-# Git
+# Exclude version control
 .git
 .gitignore
 
-# Docker
+# Exclude development files
+node_modules
+npm-debug.log
+.env
+.env.*
+.dockerignore
 Dockerfile*
 docker-compose*
 .docker
+
+# Exclude IDE files
+.vscode
+.idea
+
+# Keep WhatsApp sessions folder but exclude its contents
+sessions/*
+!sessions/.gitkeep
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist
+build

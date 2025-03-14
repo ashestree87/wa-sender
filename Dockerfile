@@ -25,8 +25,6 @@ RUN apt-get update -qq && \
     libgbm-dev && \
     rm -rf /var/lib/apt/lists/*
 
-
-
 # Set Puppeteer environment variables
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -53,5 +51,5 @@ COPY --from=build /app /app
 # Expose the correct port
 EXPOSE 3000
 
-# Start the server by default
-CMD ["npm", "run", "start"]
+# Start the server
+CMD ["node", "server/index.js"]
