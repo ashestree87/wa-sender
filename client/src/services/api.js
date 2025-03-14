@@ -1,7 +1,11 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000/api'
+  baseURL: '/api',
+  withCredentials: true,
+  headers: {
+    'Content-Type': 'application/json',
+  }
 });
 
 // Add a request interceptor to include the token in all requests
@@ -16,20 +20,11 @@ api.interceptors.request.use(
   error => Promise.reject(error)
 );
 
-// Response interceptor (keep this disabled for now during development)
+// Add response interceptor to handle errors
 api.interceptors.response.use(
   response => response,
   error => {
-    console.error('API Error:', error);
-    
-    // Comment out the redirect logic for now
-    /*
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
-    }
-    */
-    
+    console.error('API Error:', error.response?.data || error.message);
     return Promise.reject(error);
   }
 );

@@ -1,0 +1,30 @@
+# Node
+node_modules
+npm-debug.log
+dist
+build
+
+# Environment
+.env
+.env.*
+
+# WhatsApp sessions
+sessions/
+**/sessions/
+
+# IDE
+.vscode
+.idea
+
+# System
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker

@@ -31,4 +31,8 @@ yarn-error.log*
 
 # Build output
 dist/
-build/ 
+build/
+
+# Docker
+.docker/
+docker-compose.override.yml 
