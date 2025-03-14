@@ -1,7 +1,11 @@
 import axios from 'axios';
 
+const API_BASE_URL = process.env.NODE_ENV === 'production' 
+  ? '/api' 
+  : 'http://localhost:3001/api';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
@@ -20,11 +24,11 @@ api.interceptors.request.use(
   error => Promise.reject(error)
 );
 
-// Add response interceptor to handle errors
+// Add response interceptor for better error handling
 api.interceptors.response.use(
   response => response,
   error => {
-    console.error('API Error:', error.response?.data || error.message);
+    console.error('API Error:', error.response ? error.response.data : error.message);
     return Promise.reject(error);
   }
 );

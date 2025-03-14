@@ -4,33 +4,45 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=development
       - PORT=3000
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
       - JWT_SECRET=${JWT_SECRET}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CORS_ORIGIN=http://localhost
     volumes:
+      - ./:/app
+      - /app/node_modules
       - whatsapp_sessions:/app/sessions
     restart: unless-stopped
     networks:
       - app-network
+    command: npm run dev
 
   frontend:
     build:
       context: ./client
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     ports:
-      - "80:80"
+      - "80:3000"
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001/api
+      - WDS_SOCKET_HOST=localhost
+      - WDS_SOCKET_PORT=80
     depends_on:
       - backend
     restart: unless-stopped
     networks:
       - app-network
+    command: npm start
 
 networks:
   app-network:

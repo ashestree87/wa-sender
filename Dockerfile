@@ -36,9 +36,9 @@ FROM base as build
 COPY --link package.json package-lock.json ./
 RUN npm install --production=false
 
-# Build client
-COPY --link . .
-RUN cd client && npm install && npm run build
+# Copy server code (exclude client directory)
+COPY --link server ./server
+COPY --link .env* ./
 
 # Remove development dependencies
 RUN npm prune --production
@@ -48,14 +48,6 @@ FROM base
 
 # Copy built application
 COPY --from=build /app /app
-
-# List contents to verify files (temporary, more verbose)
-RUN echo "=== Contents of /app/server/routes: ===" && \
-    ls -la /app/server/routes/ && \
-    echo "\n=== Contents of /app/server: ===" && \
-    ls -la /app/server/ && \
-    echo "\n=== Tree structure of /app: ===" && \
-    find /app -type f -name "*.js" | sort
 
 # Expose the default port
 EXPOSE 3000

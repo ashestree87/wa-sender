@@ -1,0 +1,38 @@
+# Development Dockerfile for backend
+FROM node:20.18.0-bullseye
+
+# Set working directory
+WORKDIR /app
+
+# Install required system dependencies (for Puppeteer & WhatsApp-web.js)
+RUN apt-get update -qq && \
+    apt-get install -y \
+    python-is-python3 \
+    pkg-config \
+    build-essential \
+    chromium \
+    libnss3 \
+    libfreetype6 \
+    libharfbuzz0b \
+    ca-certificates \
+    fonts-freefont-ttf \
+    libgbm-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set Puppeteer environment variables
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies including development dependencies
+RUN npm install
+# Install nodemon globally
+RUN npm install -g nodemon
+
+# Expose the default port
+EXPOSE 3000
+
+# Start the server in development mode with nodemon
+CMD ["npm", "run", "dev"] 

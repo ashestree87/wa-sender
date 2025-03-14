@@ -16,6 +16,9 @@ docker-compose*
 .vscode
 .idea
 
+# Exclude client directory for backend build
+client/
+
 # Keep WhatsApp sessions folder but exclude its contents
 sessions/*
 !sessions/.gitkeep
@@ -23,7 +26,3 @@ sessions/*
 # System files
 .DS_Store
 Thumbs.db
-
-# Only exclude source files, not the build
-client/node_modules
-# Do NOT exclude client/build
