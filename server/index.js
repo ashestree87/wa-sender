@@ -2,14 +2,11 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const supabase = require('./config/database');
-const authRoutes = require('./routes/auth');
-const campaignRoutes = require('./routes/campaigns');
-const whatsappRoutes = require('./routes/whatsapp');
 const app = require('./app');
 
 dotenv.config();
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;  // Default to 3000 for local development
 
 // Middleware
 app.use(cors({
@@ -36,11 +33,6 @@ console.log(`Starting server on port: ${PORT}`);
 app.get('/', (req, res) => {
   res.json({ message: '✅ Server is running!' });
 });
-
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/campaigns', campaignRoutes);
-app.use('/api/whatsapp', whatsappRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -29,15 +29,16 @@ RUN apt-get update -qq && \
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Throw-away build stage to reduce final image size
+# Build stage
 FROM base as build
 
 # Install node modules
 COPY --link package.json package-lock.json ./
 RUN npm install --production=false
 
-# Copy application code
+# Build client
 COPY --link . .
+RUN cd client && npm install && npm run build
 
 # Remove development dependencies
 RUN npm prune --production
@@ -48,7 +49,15 @@ FROM base
 # Copy built application
 COPY --from=build /app /app
 
-# Expose the correct port
+# List contents to verify files (temporary, more verbose)
+RUN echo "=== Contents of /app/server/routes: ===" && \
+    ls -la /app/server/routes/ && \
+    echo "\n=== Contents of /app/server: ===" && \
+    ls -la /app/server/ && \
+    echo "\n=== Tree structure of /app: ===" && \
+    find /app -type f -name "*.js" | sort
+
+# Expose the default port
 EXPOSE 3000
 
 # Start the server

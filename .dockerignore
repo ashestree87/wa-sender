@@ -24,6 +24,6 @@ sessions/*
 .DS_Store
 Thumbs.db
 
-# Build artifacts
-dist
-build
+# Only exclude source files, not the build
+client/node_modules
+# Do NOT exclude client/build
