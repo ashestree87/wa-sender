@@ -1,6 +1,6 @@
 # Use latest stable Node.js version
 ARG NODE_VERSION=20.18.0
-FROM node:${NODE_VERSION}-slim AS base
+FROM node:${NODE_VERSION}-bullseye AS base
 
 LABEL fly_launch_runtime="NodeJS"
 
@@ -17,13 +17,15 @@ RUN apt-get update -qq && \
     pkg-config \
     build-essential \
     chromium \
-    nss \
-    freetype \
-    harfbuzz \
+    libnss3 \
+    libfreetype6 \
+    libharfbuzz0b \
     ca-certificates \
-    ttf-freefont \
+    fonts-freefont-ttf \
     libgbm-dev && \
     rm -rf /var/lib/apt/lists/*
+
+
 
 # Set Puppeteer environment variables
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
