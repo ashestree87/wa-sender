@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "wa_sender_db"
-database_id = "cff72851-94c7-4a10-8fd5-a4f0c8f11ecd"
+database_id = "2eeeb175-c7c8-4e96-ab6a-b3a63a591008"
 
 # Environment variables
 [vars]

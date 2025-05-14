@@ -7,7 +7,8 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "db:create": "wrangler d1 create wa_sender_db",
-    "db:migrate": "wrangler d1 execute wa_sender_db --file=./db/schema.sql"
+    "db:migrate": "wrangler d1 execute wa_sender_db --file=./db/schema.sql",
+    "db:deploy": "npm run db:create && npm run deploy"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -15,6 +16,6 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240508.0",
-    "wrangler": "^3.39.0"
+    "wrangler": "^4.14.4"
   }
 } 
