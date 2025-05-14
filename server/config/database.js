@@ -1,6 +1,8 @@
 const { D1Database } = require('@cloudflare/workers-types');
-const { connect } = require('@databases/sqlite');
+const { open } = require('sqlite');
+const sqlite3 = require('sqlite3');
 const dotenv = require('dotenv');
+const path = require('path');
 
 dotenv.config();
 
@@ -8,25 +10,49 @@ dotenv.config();
 const isDev = process.env.NODE_ENV !== 'production';
 
 let db;
+let sqliteDb;
 
-if (isDev) {
-  // Use SQLite for local development
-  const path = require('path');
-  const dbPath = path.join(__dirname, '../../', process.env.DEV_DB_PATH || 'wa_sender.db');
-  db = connect(`file:${dbPath}`);
-} else {
-  // In production we'll use Cloudflare D1
-  // The actual binding will be set by Cloudflare Workers environment
-  // This code is a placeholder that will be replaced at runtime
-  db = process.env.DB;
+// This will initialize the database connection
+async function initializeDatabase() {
+  if (isDev) {
+    // Use SQLite for local development
+    const dbPath = path.join(__dirname, '../../', process.env.DEV_DB_PATH || 'wa_sender.db');
+    
+    try {
+      sqliteDb = await open({
+        filename: dbPath,
+        driver: sqlite3.Database
+      });
+      console.log('Connected to SQLite database at:', dbPath);
+    } catch (err) {
+      console.error('Error connecting to SQLite:', err);
+      throw err;
+    }
+  } else {
+    // In production we'll use Cloudflare D1
+    // The actual binding will be set by Cloudflare Workers environment
+    sqliteDb = process.env.DB;
+  }
 }
+
+// Initialize the database connection but don't block startup
+initializeDatabase().catch(err => {
+  console.error('Failed to initialize database:', err);
+});
 
 /**
  * Database client that abstracts away differences between SQLite and D1
  */
 class Database {
-  constructor(client) {
-    this.client = client;
+  constructor() {
+    // We'll initialize the client lazily
+  }
+
+  async getClient() {
+    if (!sqliteDb) {
+      await initializeDatabase();
+    }
+    return sqliteDb;
   }
 
   /**
@@ -37,13 +63,15 @@ class Database {
    */
   async query(query, params = {}) {
     try {
+      const client = await this.getClient();
+
       if (isDev) {
         // Local SQLite
-        const result = await this.client.query(query, params);
+        const result = await client.all(query, params);
         return { data: result, error: null };
       } else {
         // Cloudflare D1
-        const prepared = this.client.prepare(query);
+        const prepared = client.prepare(query);
         
         // Bind parameters
         Object.entries(params).forEach(([key, value]) => {
@@ -203,4 +231,4 @@ class Database {
   }
 }
 
-module.exports = new Database(db); 
+module.exports = new Database(); 

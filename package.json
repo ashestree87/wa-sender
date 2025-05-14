@@ -5,9 +5,10 @@
     "build": "cd client && npm install && npm run build",
     "db:create": "wrangler d1 create wa_sender_db",
     "db:migrate": "wrangler d1 execute wa_sender_db --file=./db/schema.sql",
-    "db:local": "better-sqlite3 wa_sender.db 'CREATE TABLE IF NOT EXISTS \"_cf_D1_version\" (\"version\" INTEGER NOT NULL)'",
+    "db:local": "sqlite3 wa_sender.db 'CREATE TABLE IF NOT EXISTS \"_cf_D1_version\" (\"version\" INTEGER NOT NULL)'",
     "db:shell": "sqlite3 wa_sender.db",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "cloudflare:build": "./cloudflare-build.sh"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20240508.0",
@@ -24,14 +25,15 @@
     "openai": "^4.0.0",
     "qrcode": "^1.5.4",
     "react-router-dom": "^7.3.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.6",
     "uuid": "^11.1.0",
     "whatsapp-web.js": "^1.26.0"
   },
   "devDependencies": {
     "axios": "^1.8.2",
-    "better-sqlite3": "^9.5.0",
+    "esbuild": "^0.20.2",
     "nodemon": "^3.0.0",
-    "sqlite3": "^5.1.6",
     "wrangler": "^3.39.0"
   }
 }
