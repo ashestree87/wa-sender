@@ -1,5 +1,5 @@
 name = "wa-worker-d1"
-compatibility_date = "2025-05-30"
+compatibility_date = "2025-05-01"
 main = "worker.js"
 compatibility_flags = ["nodejs_compat"]
 
