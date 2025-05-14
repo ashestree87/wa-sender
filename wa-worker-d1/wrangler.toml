@@ -1,7 +1,7 @@
 name = "wa-worker-d1"
 compatibility_date = "2025-05-30"
 main = "worker.js"
-node_compat = true
+compatibility_flags = ["nodejs_compat"]
 
 # D1 Database Configuration
 [[d1_databases]]

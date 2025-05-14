@@ -1,5 +1,3 @@
-import app from '../wa-sender/server/app';
-
 // Worker for handling requests with D1 database
 export default {
   async fetch(request, env) {
