@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const supabase = require('./config/database');
+const db = require('./config/database');
 const app = require('./app');
 
 dotenv.config();
@@ -21,11 +21,11 @@ console.log(`Starting server on port: ${PORT}`);
 // Test database connection
 (async () => {
   try {
-    const { data, error } = await supabase.from('users').select('count');
+    const { data, error } = await db.query('SELECT COUNT(*) as count FROM users');
     if (error) throw error;
-    console.log('✅ Connected to Supabase');
+    console.log('✅ Connected to database');
   } catch (err) {
-    console.error('❌ Error connecting to Supabase:', err);
+    console.error('❌ Error connecting to database:', err);
   }
 })();
 

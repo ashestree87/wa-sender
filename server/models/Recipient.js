@@ -1,84 +1,77 @@
-const supabase = require('../config/database');
+const db = require('../config/database');
 
 class Recipient {
   static async bulkCreate(recipients) {
-    const { data, error } = await supabase
-      .from('recipients')
-      .insert(recipients.map(r => ({
+    const { data, error } = await db.insert('recipients', 
+      recipients.map(r => ({
         campaign_id: r.campaignId,
         phone_number: r.phoneNumber,
         name: r.name,
         status: 'pending'
-      })))
-      .select();
+      }))
+    );
 
     if (error) throw error;
     return data;
   }
 
   static async findByCampaignId(campaignId) {
-    const { data, error } = await supabase
-      .from('recipients')
-      .select('*')
-      .eq('campaign_id', campaignId);
+    const { data, error } = await db.getMany('recipients', {
+      campaign_id: campaignId
+    });
 
     if (error) throw error;
     return data;
   }
 
-  static async updateStatus(id, status, additionalData = {}) {
-    const updateData = {
-      status,
-      ...additionalData
-    };
-    
-    if (status === 'sent' && !updateData.sent_at) {
-      updateData.sent_at = new Date().toISOString();
+  static async update(id, updateData) {
+    // Convert camelCase to snake_case for certain fields
+    const dbData = {};
+    for (const [key, value] of Object.entries(updateData)) {
+      // Convert keys like phoneNumber to phone_number
+      const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      dbData[dbKey] = value;
     }
     
-    if (status === 'delivered' && !updateData.delivered_at) {
-      updateData.delivered_at = new Date().toISOString();
+    // Handle special fields for timestamps
+    if (dbData.status === 'sent' && !dbData.sent_at) {
+      dbData.sent_at = new Date().toISOString();
     }
     
-    const { data, error } = await supabase
-      .from('recipients')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
+    if (dbData.status === 'delivered' && !dbData.delivered_at) {
+      dbData.delivered_at = new Date().toISOString();
+    }
+    
+    const { data, error } = await db.update('recipients', dbData, {
+      id: id
+    });
 
     if (error) throw error;
-    return data;
+    return data[0];
   }
 
   static async findById(id) {
-    const { data, error } = await supabase
-      .from('recipients')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const { data, error } = await db.getOne('recipients', {
+      id: id
+    });
 
     if (error) throw error;
     return data;
   }
 
-  static async updateMessage(id, message) {
-    const { data, error } = await supabase
-      .from('recipients')
-      .update({ message })
-      .eq('id', id)
-      .select()
-      .single();
+  static async delete(id) {
+    const { error } = await db.delete('recipients', {
+      id: id
+    });
 
     if (error) throw error;
-    return data;
+    return true;
   }
 
   static async deleteByCampaignId(campaignId) {
-    const { error } = await supabase
-      .from('recipients')
-      .delete()
-      .eq('campaign_id', campaignId);
+    const { error } = await db.delete('recipients', {
+      campaign_id: campaignId
+    });
 
     if (error) throw error;
     return true;

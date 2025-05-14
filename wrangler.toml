@@ -1,0 +1,14 @@
+name = "wa-sender"
+compatibility_date = "2025-05-30"
+main = "worker.js"
+node_compat = true
+
+# D1 Database Configuration
+[[d1_databases]]
+binding = "DB"
+database_name = "wa_sender_db"
+database_id = "cff72851-94c7-4a10-8fd5-a4f0c8f11ecd"
+
+# Environment variables
+[vars]
+NODE_ENV = "production"

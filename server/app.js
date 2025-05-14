@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const routes = require('./routes');
 
+// Create Express app
 const app = express();
 
 // Configure CORS to handle multiple origins
@@ -55,4 +56,16 @@ app.use((err, req, res, next) => {
   res.status(500).send({ message: 'Server Error', error: err.message });
 });
 
-module.exports = app; 
+// Support for Cloudflare Workers
+// This function adapts the Express app to work in a Cloudflare Worker
+const adaptToWorker = async (request, env) => {
+  return new Promise((resolve) => {
+    // Use Express to handle the request
+    app(request, undefined, resolve);
+  });
+};
+
+// Export both the Express app and the Worker adapter
+module.exports = process.env.CLOUDFLARE_WORKER 
+  ? adaptToWorker 
+  : app; 

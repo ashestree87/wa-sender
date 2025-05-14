@@ -1,4 +1,4 @@
-const supabase = require('../config/database');
+const db = require('../config/database');
 
 class Campaign {
   static async create(campaignData) {
@@ -21,48 +21,45 @@ class Campaign {
       ? campaignData.scheduledEndTime
       : null;
     
-    const { data, error } = await supabase
-      .from('campaigns')
-      .insert([{
-        user_id: campaignData.userId,
-        name: campaignData.name,
-        description: campaignData.description,
-        message_template: campaignData.messageTemplate,
-        use_ai: campaignData.useAI,
-        ai_prompt: campaignData.aiPrompt,
-        status: campaignData.status || 'draft',
-        scheduled_start_time: scheduledStartTime,
-        scheduled_end_time: scheduledEndTime,
-        min_delay_seconds: parseInt(campaignData.minDelaySeconds) || 3,
-        max_delay_seconds: parseInt(campaignData.maxDelaySeconds) || 5,
-        daily_limit: parseInt(campaignData.dailyLimit) || 0,
-        time_window_start: timeWindowStart,
-        time_window_end: timeWindowEnd
-      }])
-      .select()
-      .single();
+    const { data, error } = await db.insert('campaigns', {
+      user_id: campaignData.userId,
+      name: campaignData.name,
+      description: campaignData.description,
+      message_template: campaignData.messageTemplate,
+      use_ai: campaignData.useAI,
+      ai_prompt: campaignData.aiPrompt,
+      status: campaignData.status || 'draft',
+      scheduled_start_time: scheduledStartTime,
+      scheduled_end_time: scheduledEndTime,
+      min_delay_seconds: parseInt(campaignData.minDelaySeconds) || 3,
+      max_delay_seconds: parseInt(campaignData.maxDelaySeconds) || 5,
+      daily_limit: parseInt(campaignData.dailyLimit) || 0,
+      time_window_start: timeWindowStart,
+      time_window_end: timeWindowEnd
+    });
 
     if (error) throw error;
-    return data;
+    return data[0];
   }
 
   static async findByUserId(userId) {
-    const { data, error } = await supabase
-      .from('campaigns')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    const { data, error } = await db.getMany('campaigns', {
+      user_id: userId
+    }, {
+      orderBy: {
+        column: 'created_at',
+        direction: 'DESC'
+      }
+    });
 
     if (error) throw error;
     return data;
   }
 
   static async findById(id) {
-    const { data, error } = await supabase
-      .from('campaigns')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const { data, error } = await db.getOne('campaigns', {
+      id: id
+    });
 
     if (error) throw error;
     return data;
@@ -93,34 +90,31 @@ class Campaign {
         ? updateData.scheduledEndTime
         : null;
       
-      const { data, error } = await supabase
-        .from('campaigns')
-        .update({
-          name: updateData.name,
-          description: updateData.description,
-          message_template: updateData.messageTemplate,
-          use_ai: updateData.useAI,
-          ai_prompt: updateData.aiPrompt,
-          status: updateData.status,
-          scheduled_start_time: scheduledStartTime,
-          scheduled_end_time: scheduledEndTime,
-          min_delay_seconds: parseInt(updateData.minDelaySeconds) || 3,
-          max_delay_seconds: parseInt(updateData.maxDelaySeconds) || 5,
-          daily_limit: parseInt(updateData.dailyLimit) || 0,
-          time_window_start: timeWindowStart,
-          time_window_end: timeWindowEnd
-        })
-        .eq('id', id)
-        .select()
-        .single();
+      const { data, error } = await db.update('campaigns', {
+        name: updateData.name,
+        description: updateData.description,
+        message_template: updateData.messageTemplate,
+        use_ai: updateData.useAI,
+        ai_prompt: updateData.aiPrompt,
+        status: updateData.status,
+        scheduled_start_time: scheduledStartTime,
+        scheduled_end_time: scheduledEndTime,
+        min_delay_seconds: parseInt(updateData.minDelaySeconds) || 3,
+        max_delay_seconds: parseInt(updateData.maxDelaySeconds) || 5,
+        daily_limit: parseInt(updateData.dailyLimit) || 0,
+        time_window_start: timeWindowStart,
+        time_window_end: timeWindowEnd
+      }, {
+        id: id
+      });
 
       if (error) {
-        console.error('Supabase update error:', error);
+        console.error('Database update error:', error);
         throw error;
       }
       
       console.log('Update successful, returned data:', data);
-      return data;
+      return data[0];
     } catch (error) {
       console.error('Error in Campaign.update:', error);
       throw error;
@@ -128,10 +122,9 @@ class Campaign {
   }
 
   static async delete(id) {
-    const { error } = await supabase
-      .from('campaigns')
-      .delete()
-      .eq('id', id);
+    const { error } = await db.delete('campaigns', {
+      id: id
+    });
 
     if (error) throw error;
     return true;
@@ -144,27 +137,24 @@ class Campaign {
       throw new Error(`Invalid status: ${status}`);
     }
     
-    const { data, error } = await supabase
-      .from('campaigns')
-      .update({ status })
-      .eq('id', id)
-      .select()
-      .single();
+    const { data, error } = await db.update('campaigns', { 
+      status: status 
+    }, {
+      id: id
+    });
     
     if (error) throw error;
-    return data;
+    return data[0];
   }
 
   static async getRecipient(campaignId, recipientId) {
     try {
       console.log(`DB Query: Getting recipient ${recipientId} for campaign ${campaignId}`);
       
-      const { data, error } = await supabase
-        .from('recipients')
-        .select('*')
-        .eq('campaign_id', campaignId)
-        .eq('id', recipientId)
-        .single();
+      const { data, error } = await db.getOne('recipients', {
+        campaign_id: campaignId,
+        id: recipientId
+      });
       
       if (error) {
         console.error('Error in getRecipient:', error);
@@ -189,13 +179,12 @@ class Campaign {
         throw new Error(`Invalid recipient status: ${status}`);
       }
       
-      const { data, error } = await supabase
-        .from('recipients')
-        .update({ status })
-        .eq('campaign_id', campaignId)
-        .eq('id', recipientId)
-        .select()
-        .single();
+      const { data, error } = await db.update('recipients', {
+        status: status
+      }, {
+        campaign_id: campaignId,
+        id: recipientId
+      });
       
       if (error) {
         console.error('Error in updateRecipientStatus:', error);
@@ -203,7 +192,7 @@ class Campaign {
       }
       
       console.log('Updated recipient data:', data);
-      return data;
+      return data[0];
     } catch (error) {
       console.error(`Failed to update recipient ${recipientId} status to ${status}:`, error);
       throw error;
@@ -223,10 +212,7 @@ class Campaign {
       }));
       
       // Insert all recipients in a single operation
-      const { data, error } = await supabase
-        .from('recipients')
-        .insert(formattedRecipients)
-        .select();
+      const { data, error } = await db.insert('recipients', formattedRecipients);
       
       if (error) {
         console.error('Error in processBulkRecipients:', error);
