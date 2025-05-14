@@ -12,6 +12,7 @@ primary_region = "syd"
 [env]
   PORT = "3000"
   NODE_ENV = "production"
+  WORKER_API_URL = "https://wa-worker-d1.your-account.workers.dev"
 
 [http_service]
   internal_port = 3000

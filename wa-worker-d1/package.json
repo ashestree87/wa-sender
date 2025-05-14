@@ -1,0 +1,20 @@
+{
+  "name": "wa-worker-d1",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker with D1 database for WhatsApp Sender",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "db:create": "wrangler d1 create wa_sender_db",
+    "db:migrate": "wrangler d1 execute wa_sender_db --file=./db/schema.sql"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240508.0",
+    "wrangler": "^3.39.0"
+  }
+} 

@@ -4,15 +4,10 @@
     "dev": "nodemon --legacy-watch --watch server server/index.js",
     "build": "cd client && npm install && npm run build",
     "build:client": "cd client && CI=false npm run build",
-    "db:create": "wrangler d1 create wa_sender_db",
-    "db:migrate": "wrangler d1 execute wa_sender_db --file=./db/schema.sql",
     "db:local": "sqlite3 wa_sender.db 'CREATE TABLE IF NOT EXISTS \"_cf_D1_version\" (\"version\" INTEGER NOT NULL)'",
-    "db:shell": "sqlite3 wa_sender.db",
-    "deploy": "wrangler deploy",
-    "deploy:worker": "wrangler deploy worker.js"
+    "db:shell": "sqlite3 wa_sender.db"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20240508.0",
     "@databases/sqlite": "^4.0.2",
     "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.49.1",
@@ -34,7 +29,6 @@
   "devDependencies": {
     "axios": "^1.8.2",
     "esbuild": "^0.20.2",
-    "nodemon": "^3.0.0",
-    "wrangler": "^3.39.0"
+    "nodemon": "^3.0.0"
   }
 }
