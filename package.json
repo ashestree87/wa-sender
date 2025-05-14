@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20240508.0",
-    "@databases/sqlite": "^4.1.0",
+    "@databases/sqlite": "^4.0.2",
     "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.49.1",
     "@tailwindcss/forms": "^0.5.10",
