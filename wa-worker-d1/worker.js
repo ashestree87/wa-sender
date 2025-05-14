@@ -1,4 +1,4 @@
-import app from './server/app';
+import app from '../wa-sender/server/app';
 
 // Create a fetch event handler for the Worker
 export default {
